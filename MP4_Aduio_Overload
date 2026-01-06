@@ -1,0 +1,57 @@
+import subprocess
+import os
+from tkinter import Tk, filedialog, messagebox
+
+def select_file(title, filetypes):
+    root = Tk()
+    root.withdraw()
+    return filedialog.askopenfilename(title=title, filetypes=filetypes)
+
+def replace_audio(video_path, audio_path):
+    output_path = os.path.splitext(video_path)[0] + "_new_audio.mp4"
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-c:v", "copy",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        output_path
+    ]
+
+    subprocess.run(command, check=True)
+    return output_path
+
+def main():
+    video_path = select_file(
+        "בחר קובץ וידאו (MP4)",
+        [("MP4 files", "*.mp4")]
+    )
+
+    if not video_path:
+        messagebox.showerror("שגיאה", "לא נבחר קובץ וידאו")
+        return
+
+    audio_path = select_file(
+        "בחר קובץ אודיו (WAV)",
+        [("WAV files", "*.wav")]
+    )
+
+    if not audio_path:
+        messagebox.showerror("שגיאה", "לא נבחר קובץ אודיו")
+        return
+
+    try:
+        output = replace_audio(video_path, audio_path)
+        messagebox.showinfo(
+            "הצלחה",
+            f"האודיו הוחלף בהצלחה!\n\nנוצר קובץ:\n{output}"
+        )
+    except Exception as e:
+        messagebox.showerror("שגיאה", str(e))
+
+if __name__ == "__main__":
+    main()
