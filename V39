@@ -1,0 +1,505 @@
+import os
+import re
+import shutil
+import subprocess
+import logging
+import uuid
+import time
+import pandas as pd
+from pathlib import Path
+import imageio_ffmpeg
+import gradio as gr
+
+# ==========================================
+# חלק 1: הגדרות וייבוא ספריות
+# ==========================================
+
+WORK_DIR = os.path.abspath("Karaoke_Output")
+os.makedirs(WORK_DIR, exist_ok=True)
+
+# בדיקת חומרה
+try:
+    import torch
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"🚀 חומרה זוהתה: {torch.cuda.get_device_name(0) if DEVICE == 'cuda' else 'CPU'}")
+except ImportError:
+    DEVICE = "cpu"
+    print("⚠️ PyTorch לא זוהה. רץ על CPU.")
+
+try:
+    import yt_dlp
+    import soundfile as sf
+    from transformers import pipeline
+    from audio_separator.separator import Separator
+    import librosa
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+except ImportError as e:
+    print(f"❌ שגיאה בטעינת ספריות: {e}")
+    print("אנא וודא שהרצת: pip install \"numpy<2.0\"")
+
+logging.getLogger("audio_separator").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
+# ==========================================
+# חלק 2: מנוע העיבוד (Backend)
+# ==========================================
+
+class BackendProcessor:
+    def __init__(self, log_func):
+        self.log = log_func
+        self.ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+
+    def _fix_hebrew_text(self, text):
+        try:
+            if not text: return ""
+            text = str(text)
+            reshaped = arabic_reshaper.reshape(text)
+            return get_display(reshaped)
+        except: return text
+
+    def _fmt_ass_time(self, seconds):
+        try:
+            seconds = float(seconds)
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            cs = int((seconds - int(seconds)) * 100)
+            return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+        except: return "0:00:00.00"
+
+    def convert_to_wav(self, input_path, output_path):
+        try:
+            cmd = [self.ffmpeg_exe, '-y', '-i', input_path, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', output_path]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except: return False
+
+    # --- חיפוש (משופר) ---
+    def search_youtube(self, query):
+        self.log(f"🔎 מחפש: '{query}'...")
+        opts = {
+            'default_search': 'ytsearch1', 
+            'quiet': True, 
+            'no_warnings': True,
+            'noplaylist': True,
+            # הסרתי את extract_flat כדי לקבל מידע מלא ואמין
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(query, download=False)
+                
+                # בדיקה למקרה של חיפוש
+                if 'entries' in info and len(info['entries']) > 0:
+                    video_info = info['entries'][0]
+                    title = video_info.get('title', 'Unknown')
+                    url = video_info.get('webpage_url') or video_info.get('url')
+                    self.log(f"✅ נמצא: {title}")
+                    return url
+                
+                # בדיקה למקרה של לינק ישיר
+                if 'id' in info:
+                    self.log(f"✅ נמצא: {info.get('title', 'Video')}")
+                    return info.get('webpage_url') or info.get('url')
+                    
+        except Exception as e:
+            self.log(f"⚠️ שגיאה בחיפוש: {e}")
+            pass
+        
+        self.log("❌ לא נמצא שיר.")
+        return None
+
+    # --- הורדה ---
+    def download(self, url, output_dir, playlist_items=None):
+        noplaylist_flag = True if playlist_items is None else False
+        if playlist_items is None: playlist_items = '1'
+        
+        self.log(f"📥 מוריד...")
+        
+        # שימוש ב-ID כשם קובץ למניעת תקלות FFmpeg
+        safe_tmpl = f'{output_dir}/%(id)s.%(ext)s'
+        
+        opts = {
+            'outtmpl': safe_tmpl,
+            'quiet': True, 'no_warnings': True, 
+            'noplaylist': noplaylist_flag, 'playlist_items': playlist_items,
+            'ffmpeg_location': self.ffmpeg_exe,
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'merge_output_format': 'mp4'
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if 'entries' in info:
+                    return [ydl.prepare_filename(e) for e in info['entries'] if e]
+                else:
+                    return [ydl.prepare_filename(info)]
+        except Exception as e:
+            self.log(f"❌ שגיאה בהורדה: {e}")
+            return []
+
+    # --- הפרדה (מתוקן - מזהה פלייבק בוודאות) ---
+    def separate(self, audio_path, output_dir, mode="2_stems"):
+        self.log(f"🎚️ מפריד ({DEVICE}): {os.path.basename(audio_path)}...")
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        
+        sep_dir = os.path.join(output_dir, f"Sep_{uuid.uuid4().hex[:4]}")
+        os.makedirs(sep_dir, exist_ok=True)
+        
+        try:
+            temp_input = os.path.join(sep_dir, "input.wav")
+            self.convert_to_wav(audio_path, temp_input)
+
+            sep = Separator(log_level=logging.ERROR, output_dir=sep_dir, model_file_dir=os.path.join(output_dir, "uvr_models"))
+            sep.load_model("Kim_Vocal_2.onnx" if mode == "2_stems" else "htdemucs_ft.yaml")
+            files = sep.separate(temp_input)
+            
+            vocals_path = None
+            playback_path = None
+
+            # זיהוי חכם
+            for f in files:
+                full_p = os.path.join(sep_dir, f)
+                lower = f.lower()
+                # קודם כל נחפש אינסטרומנטל
+                if "instrumental" in lower or "no_vocals" in lower:
+                    playback_path = full_p
+                # אחר כך שירה
+                elif "vocal" in lower:
+                    vocals_path = full_p
+
+            # Fallback
+            if len(files) == 2:
+                if not playback_path and vocals_path:
+                    for f in files:
+                        p = os.path.join(sep_dir, f)
+                        if p != vocals_path: playback_path = p
+                elif not vocals_path and playback_path:
+                    for f in files:
+                        p = os.path.join(sep_dir, f)
+                        if p != playback_path: vocals_path = p
+            
+            # שמירה מסודרת
+            base_name = Path(audio_path).stem
+            final_vocals = os.path.join(output_dir, f"{base_name}_Vocals.wav")
+            final_playback = os.path.join(output_dir, f"{base_name}_Playback.wav")
+
+            if vocals_path and os.path.exists(vocals_path):
+                shutil.move(vocals_path, final_vocals)
+            else: final_vocals = audio_path 
+
+            if playback_path and os.path.exists(playback_path):
+                shutil.move(playback_path, final_playback)
+            else: 
+                # אם המודל נכשל בייצור פלייבק, עדיף להשתמש במקור מאשר לקרוס
+                final_playback = audio_path 
+
+            try: shutil.rmtree(sep_dir)
+            except: pass
+            
+            self.log(f"✅ הפרדה הושלמה.")
+            return [final_vocals, final_playback]
+
+        except Exception as e:
+            self.log(f"❌ שגיאה בהפרדה: {e}")
+            return [audio_path, audio_path]
+
+    # --- תמלול ---
+    def transcribe(self, audio_path, output_dir, lang="he"):
+        self.log(f"📝 מתמלל...")
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        try:
+            model_id = "ivrit-ai/whisper-large-v3-turbo" if lang == "he" else "openai/whisper-large-v3"
+            dtype = torch.float16 if DEVICE == "cuda" else torch.float32
+            
+            pipe = pipeline("automatic-speech-recognition", model=model_id, device=DEVICE, torch_dtype=dtype, chunk_length_s=30, return_timestamps="word")
+            
+            clean_wav = os.path.join(output_dir, "clean_trans.wav")
+            self.convert_to_wav(audio_path, clean_wav)
+            result = pipe(clean_wav, generate_kwargs={"language": "hebrew" if lang == "he" else "english"})
+            
+            ass_path = os.path.join(output_dir, f"subs_{uuid.uuid4().hex[:4]}.ass")
+            self._create_ass_file(result['chunks'], ass_path, fix_hebrew=False)
+            
+            if os.path.exists(clean_wav): os.remove(clean_wav)
+            return ass_path
+        except Exception as e:
+            self.log(f"❌ תמלול נכשל: {e}")
+            return None
+
+    def _create_ass_file(self, chunks, output_path, fix_hebrew=False):
+        header = """[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Karaoke,Arial,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,100,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"""
+        events = []
+        curr_line = []
+        for chunk in chunks:
+            text = chunk['text'].strip()
+            if fix_hebrew: text = self._fix_hebrew_text(text)
+            start, end = chunk['timestamp']
+            curr_line.append({'text': text, 'start': start, 'end': end})
+            
+            if text.endswith(('.', '?', '!', ',')) or len(curr_line) > 6:
+                l_start = self._fmt_ass_time(curr_line[0]['start'])
+                l_end = self._fmt_ass_time(curr_line[-1]['end'])
+                full = " ".join([w['text'] for w in curr_line])
+                if fix_hebrew: full = self._fix_hebrew_text(" ".join([w['text'] for w in curr_line][::-1]))
+                events.append(f"Dialogue: 0,{l_start},{l_end},Karaoke,,0,0,0,,{full}")
+                curr_line = []
+        
+        if curr_line:
+             l_start = self._fmt_ass_time(curr_line[0]['start'])
+             l_end = self._fmt_ass_time(curr_line[-1]['end'])
+             full = " ".join([w['text'] for w in curr_line])
+             if fix_hebrew: full = self._fix_hebrew_text(full)
+             events.append(f"Dialogue: 0,{l_start},{l_end},Karaoke,,0,0,0,,{full}")
+
+        with open(output_path, "w", encoding="utf-8-sig") as f:
+            f.write(header + "\n".join(events))
+
+    # --- רינדור סופי ---
+    def render(self, video_path, audio_path, ass_path, output_dir, use_bidi=False):
+        self.log(f"🎬 מרנדר (BIDI={use_bidi})...")
+        out_name = f"Karaoke_{Path(video_path).stem}_{uuid.uuid4().hex[:4]}.mp4"
+        out_path = os.path.join(output_dir, out_name)
+        
+        temp_ass = os.path.join(output_dir, "temp_render.ass")
+        try:
+            with open(ass_path, 'r', encoding='utf-8-sig') as f: content = f.read()
+            if use_bidi:
+                lines = content.splitlines()
+                new_lines = []
+                for line in lines:
+                    if line.startswith("Dialogue:"):
+                        parts = line.split(",", 9)
+                        if len(parts) == 10:
+                            parts[9] = self._fix_hebrew_text(parts[9])
+                            new_lines.append(",".join(parts))
+                        else: new_lines.append(line)
+                    else: new_lines.append(line)
+                with open(temp_ass, 'w', encoding='utf-8-sig') as f: f.write("\n".join(new_lines))
+            else:
+                shutil.copy2(ass_path, temp_ass)
+        except: return None
+
+        # תיקון נתיב לחלונות
+        ass_path_fixed = os.path.basename(temp_ass).replace("\\", "/")
+
+        cmd = [self.ffmpeg_exe, '-y', '-i', video_path, '-i', audio_path, 
+               '-filter_complex', f"[0:v]ass='{ass_path_fixed}'[v]",
+               '-map', '[v]', '-map', '1:a', 
+               '-c:v', 'libx264', '-preset', 'ultrafast', 
+               '-c:a', 'aac', '-b:a', '192k', 
+               '-shortest', out_path]
+        
+        cwd = os.getcwd()
+        os.chdir(output_dir)
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.chdir(cwd)
+            try: os.remove(os.path.join(output_dir, os.path.basename(temp_ass)))
+            except: pass
+            self.log("✅ סרטון מוכן!")
+            return out_path
+        except Exception as e:
+            self.log(f"Render Error: {e}")
+            os.chdir(cwd)
+            return None
+
+    # --- כלים לדשבורד ---
+    def ass_to_dataframe(self, ass_path):
+        if not ass_path or not os.path.exists(ass_path): return pd.DataFrame()
+        data = []
+        with open(ass_path, 'r', encoding='utf-8-sig') as f:
+            for line in f:
+                if line.startswith("Dialogue:"):
+                    parts = line.split(",", 9)
+                    if len(parts) == 10: data.append({"Start": parts[1], "End": parts[2], "Text": parts[9].strip()})
+        return pd.DataFrame(data)
+
+    def dataframe_to_ass(self, df, original_ass_path, output_path):
+        header_lines = []
+        if original_ass_path and os.path.exists(original_ass_path):
+            with open(original_ass_path, 'r', encoding='utf-8-sig') as f:
+                for line in f:
+                    if line.startswith("Dialogue:"): break
+                    header_lines.append(line)
+        else:
+            header_lines = ["""[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Karaoke,Arial,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,100,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"""]
+
+        with open(output_path, 'w', encoding='utf-8-sig') as f:
+            f.writelines(header_lines)
+            for _, row in df.iterrows(): f.write(f"Dialogue: 0,{row['Start']},{row['End']},Karaoke,,0,0,0,,{row['Text']}\n")
+        return output_path
+
+    def update_ass_style(self, ass_path, font_size, color_hex):
+        r, g, b = color_hex[1:3], color_hex[3:5], color_hex[5:7]
+        ass_color = f"&H00{b}{g}{r}".upper()
+        with open(ass_path, 'r', encoding='utf-8-sig') as f: content = f.read()
+        new_style = f"Style: Karaoke,Arial,{int(font_size)},{ass_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,100,1"
+        new_content = re.sub(r"^Style:.*Karaoke.*$", new_style, content, flags=re.MULTILINE)
+        with open(ass_path, 'w', encoding='utf-8-sig') as f: f.write(new_content)
+
+    def check_is_playlist(self, url):
+        opts = {'extract_flat': True, 'quiet': True}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if 'entries' in info: return True, len(info['entries']), info.get('title', 'Playlist')
+        except: pass
+        return False, 0, ""
+
+# ==========================================
+# חלק 3: ממשק (App)
+# ==========================================
+
+logs = []
+def log(msg):
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
+    logs.append(f"[{ts}] {msg}")
+
+def get_logs(): return "\n".join(logs)
+
+backend = BackendProcessor(log)
+
+# --- לוגיקה ---
+
+def process_initial(url, file, lang, sep_mode, use_bidi):
+    global logs; logs = []
+    
+    is_playlist, count, title = False, 0, ""
+    if url: is_playlist, count, title = backend.check_is_playlist(url)
+    
+    downloaded_files = []
+    if url: downloaded_files = backend.download(url, WORK_DIR, playlist_items='1')
+    elif file: downloaded_files = [file.name if hasattr(file, 'name') else file]
+    
+    if not downloaded_files: return None, None, None, None, get_logs(), gr.update(visible=False), gr.update(visible=False)
+
+    video_path = downloaded_files[0]
+    sep = "2_stems" if "כן" in sep_mode else "none"
+    stems = backend.separate(video_path, WORK_DIR, sep)
+    vocals, playback = stems[0], stems[1]
+    
+    ass_path = backend.transcribe(vocals, WORK_DIR, lang)
+    if not ass_path: return None, None, None, None, get_logs(), gr.update(visible=False), gr.update(visible=False)
+    
+    final_video = backend.render(video_path, playback, ass_path, WORK_DIR, use_bidi=use_bidi)
+    
+    playlist_ui = gr.update(visible=False)
+    msg_ui = gr.update(visible=False)
+    if is_playlist and count > 1:
+        msg_ui = gr.update(value=f"🎵 פלייליסט: **{title}** ({count} שירים).", visible=True)
+        playlist_ui = gr.update(visible=True)
+
+    return final_video, ass_path, playback, video_path, get_logs(), playlist_ui, msg_ui
+
+def process_playlist_rest(url, limit, lang, sep_mode, use_bidi):
+    log(f"🚀 מעבד עוד {limit} שירים...")
+    files = backend.download(url, WORK_DIR, playlist_items=f"2-{int(limit)+1}")
+    if not files: return get_logs()
+    
+    for i, video_path in enumerate(files):
+        log(f"--- שיר {i+1} ---")
+        stems = backend.separate(video_path, WORK_DIR, "2_stems" if "כן" in sep_mode else "none")
+        ass_path = backend.transcribe(stems[0], WORK_DIR, lang)
+        if ass_path: backend.render(video_path, stems[1], ass_path, WORK_DIR, use_bidi=use_bidi)
+    
+    log("🏁 סיימתי!")
+    return get_logs()
+
+def process_text_list(text_input, lang, sep_mode, use_bidi):
+    global logs; logs = []
+    if not text_input.strip(): return get_logs()
+    songs = [line.strip() for line in text_input.split('\n') if line.strip()]
+    
+    for i, song_name in enumerate(songs):
+        log(f"👉 ({i+1}) מעבד: '{song_name}'")
+        url = backend.search_youtube(song_name)
+        if not url: continue
+        files = backend.download(url, WORK_DIR)
+        if not files: continue
+        video_path = files[0]
+        stems = backend.separate(video_path, WORK_DIR, "2_stems" if "כן" in sep_mode else "none")
+        ass_path = backend.transcribe(stems[0], WORK_DIR, lang)
+        if ass_path: backend.render(video_path, stems[1], ass_path, WORK_DIR, use_bidi=use_bidi)
+        time.sleep(2)
+        
+    log("🏁 רשימה הושלמה!")
+    return get_logs()
+
+def load_to_dashboard(ass_file):
+    if not ass_file: return None
+    return backend.ass_to_dataframe(ass_file.name)
+
+def render_from_dashboard(df, original_ass_file, video_file, audio_file, size, color, use_bidi):
+    global logs; logs = []
+    log("💾 מעבד עריכות...")
+    new_ass = os.path.join(WORK_DIR, f"edited_{int(time.time())}.ass")
+    orig = original_ass_file.name if original_ass_file else None
+    backend.dataframe_to_ass(df, orig, new_ass)
+    backend.update_ass_style(new_ass, size, color)
+    v_path = video_file.name if video_file else None
+    a_path = audio_file.name if audio_file else None
+    final = backend.render(v_path, a_path, new_ass, WORK_DIR, use_bidi)
+    return final, get_logs()
+
+# --- UI ---
+with gr.Blocks(title="Karaoke V39 Final", theme=gr.themes.Soft()) as app:
+    gr.Markdown(f"# 🎤 Karaoke Studio Pro V39 ({DEVICE.upper()})")
+    
+    with gr.Tabs():
+        # טאב 1
+        with gr.Tab("⚡ יצירה אוטומטית"):
+            with gr.Row():
+                with gr.Column():
+                    url = gr.Textbox(label="YouTube URL")
+                    file = gr.File(label="קובץ מקומי")
+                    lang = gr.Dropdown(["he", "en"], value="he", label="שפה")
+                    sep = gr.Radio(["כן (UVR5)", "לא"], value="כן (UVR5)", label="הפרדה")
+                    use_bidi = gr.Checkbox(label="הפוך עברית ידנית", value=False)
+                    btn = gr.Button("🚀 התחל", variant="primary")
+                    
+                    playlist_msg = gr.Markdown(visible=False)
+                    with gr.Group(visible=False) as playlist_group:
+                        pl_limit = gr.Number(value=5, label="כמות להמשך")
+                        pl_btn = gr.Button("הורד את השאר")
+                    
+                with gr.Column():
+                    vid = gr.Video(label="תוצאה")
+                    log_box = gr.TextArea(label="לוגים", lines=8)
+                    with gr.Group():
+                        res_ass = gr.File(label="ASS (כתוביות)")
+                        res_aud = gr.File(label="Playback (פלייבק נקי)")
+                        res_vid = gr.File(label="Video (מקור)")
+            
+            btn.click(process_initial, [url, file, lang, sep, use_bidi], [vid, res_ass, res_aud, res_vid, log_box, playlist_group, playlist_msg])
+            pl_btn.click(process_playlist_rest, [url, pl_limit, lang, sep, use_bidi], [log_box])
+
+        # טאב 2
+        with gr.Tab("📚 רשימת שירים"):
+            b_text = gr.TextArea(label="רשימה (שורה לשיר)")
+            with gr.Row():
+                b_lang = gr.Dropdown(["he", "en"], value="he", label="שפה")
+                b_sep = gr.Radio(["כן (UVR5)", "לא"], value="כן (UVR5)", label="הפרדה")
+                b_bidi = gr.Checkbox(label="הפוך עברית ידנית", value=False)
+            b_btn = gr.Button("התחל")
+            b_log = gr.TextArea(label="לוגים")
+            b_btn.click(process_text_list, [b_text, b_lang, b_sep, b_bidi], [b_log])
+
+        # טאב 3
+        with gr.Tab("📝 Dashboard עריכה"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    d_ass = gr.File(label="ASS"); d_load = gr.Button("טען")
+                    d_vid = gr.File(label="Video"); d_aud = gr.File(label="Playback")
+                    d_size = gr.Slider(20, 150, 80, label="Size"); d_color = gr.ColorPicker("#00FFFF", label="Color")
+                    d_bidi = gr.Checkbox(label="הפוך עברית ידנית", value=False)
+                    d_btn = gr.Button("צור וידאו", variant="primary")
+                with gr.Column(scale=2):
+                    table = gr.Dataframe(headers=["Start", "End", "Text"], datatype=["str", "str", "str"], label="עורך", interactive=True, wrap=True, col_count=(3, "fixed"))
+                    d_res = gr.Video(label="תוצאה"); d_log = gr.TextArea(label="לוגים")
+            d_load.click(load_to_dashboard, d_ass, table)
+            d_btn.click(render_from_dashboard, [table, d_ass, d_vid, d_aud, d_size, d_color, d_bidi], [d_res, d_log])
+
+if __name__ == "__main__":
+    app.queue().launch(inbrowser=True)
