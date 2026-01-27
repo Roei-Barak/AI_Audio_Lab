@@ -196,4 +196,8 @@ with gr.Blocks(title="Karaoke Studio V71") as app:
 
 # הרצה
 if __name__ == "__main__":
-    app.queue(default_concurrency_limit=10).launch(inbrowser=True, theme=gr.themes.Soft())
+    app.queue(default_concurrency_limit=10).launch(
+        inbrowser=True, 
+        theme=gr.themes.Soft(),
+        allowed_paths=[logic.WORK_DIR]
+    )

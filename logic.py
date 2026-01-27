@@ -184,6 +184,24 @@ class BackendProcessor:
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
         gc.collect()
+    
+    def cleanup_temp_files(self, folder):
+        """Remove all temporary files and directories"""
+        if not os.path.exists(folder):
+            return
+        try:
+            for item in os.listdir(folder):
+                if item.startswith("temp_"):
+                    path = os.path.join(folder, item)
+                    try:
+                        if os.path.isdir(path):
+                            shutil.rmtree(path)
+                        elif os.path.isfile(path):
+                            os.remove(path)
+                    except Exception as e:
+                        pass  # Silently skip if can't delete
+        except Exception as e:
+            pass
 
     def _fix_hebrew_text(self, text):
         try:
@@ -359,6 +377,7 @@ class BackendProcessor:
                 return None, None
             finally:
                 mm.end_task()
+                self.cleanup_temp_files(output_folder)
 
     def transcribe_audio(self, audio_path, output_folder, title, current_logs, lang="he"):
         final_ass = os.path.join(output_folder, f"{title}.ass")
@@ -392,6 +411,7 @@ class BackendProcessor:
                 return None
             finally:
                 mm.end_task()
+                self.cleanup_temp_files(output_folder)
 
     def _create_ass_file(self, chunks, output_path, fix_hebrew=False):
         header = """[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Karaoke,Arial,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,100,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"""
@@ -462,9 +482,12 @@ class BackendProcessor:
             if os.path.exists(final_video): os.remove(final_video)
             shutil.move(temp_out, final_video)
             self.log(f"✅ הושלם: {os.path.basename(final_video)}", current_logs)
+            self.cleanup_temp_files(folder)  # Clean up any remaining temp files
             return final_video
         except Exception as e:
             self.log(f"❌ שגיאה ברינדור: {e}", current_logs); os.chdir(cwd); return None
+        finally:
+            self.cleanup_temp_files(folder)
 
     # --- Pipeline ---
     def process_song_pipeline(self, query, lang, save_4_stems, use_bidi, force_process):
@@ -514,6 +537,8 @@ class BackendProcessor:
             # Keep task visible for a bit before removing
             time.sleep(2)
             task_manager.remove_task(task_id)
+            # Clean up all temporary files in the song folder
+            self.cleanup_temp_files(info['folder'] if 'info' in locals() and info else WORK_DIR)
 
     # --- Tools ---
     def ass_to_dataframe(self, ass_path):
