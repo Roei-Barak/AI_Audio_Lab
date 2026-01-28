@@ -1,10 +1,12 @@
-PyQt6>=6.0
-sounddevice>=0.4.6
-pydub>=0.25.1
-librosa>=0.9.2
-numpy>=1.23
-scipy>=1.9
-torch>=1.13
-# Optional / future integrations:
-# youtube-dl
-# transformers
+gradio>=5.0.0
+pandas
+numpy
+imageio-ffmpeg
+yt-dlp
+soundfile
+transformers
+audio-separator
+librosa
+arabic-reshaper
+python-bidi
+pathlib
