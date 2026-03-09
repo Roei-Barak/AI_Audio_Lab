@@ -18,43 +18,48 @@ Comprehensive guide for AI assistants working in this repository.
 AI_Audio_Lab/
 ├── CLAUDE.md                      # This file
 ├── README.md                      # High-level project documentation
+├── requirements.txt               # All Python dependencies
 ├── .github/
 │   └── copilot-instructions.md    # Legacy AI agent guidance (superseded by this file)
 ├── .gitignore
 │
-├── app.py                         # Main Gradio web UI (Hebrew interface, V71)
+├── app.py                         # Original Gradio web UI (V71) — kept for reference
 ├── backend.py                     # Large backend file — mostly commented-out legacy code
-├── V39                            # Working karaoke pipeline v39 (Python script, no .py)
-├── V64                            # Working karaoke pipeline v64 (Python script, no .py)
+├── V39                            # Working karaoke pipeline v39 (read-only reference)
+├── V64                            # Working karaoke pipeline v64 (read-only reference)
 ├── MP4_Aduio_Overload             # Standalone Tkinter utility: swap audio in MP4
 │
 ├── core/
 │   ├── __init__.py
-│   └── engine.py                  # AudioEngine singleton (real-time sounddevice I/O)
+│   ├── engine.py                  # AudioEngine singleton (real-time sounddevice I/O)
+│   ├── config.py                  # Shared constants: WORK_DIR, DEVICE, MODELS, ASS_HEADER
+│   └── backend.py                 # BackendProcessor + ResourceManager (canonical engine)
+│
+├── modules/                       # Standalone CLI modules — each runnable independently
+│   ├── __init__.py
+│   ├── downloader.py              # python -m modules.downloader <url>
+│   ├── separator.py               # python -m modules.separator  <file> --mode 2|4
+│   ├── transcriber.py             # python -m modules.transcriber <file> --format ass,srt,txt
+│   └── renderer.py                # python -m modules.renderer   <video> <audio> <subs>
+│
+├── cli/
+│   ├── __init__.py
+│   └── main.py                    # python cli/main.py pipeline|download|separate|transcribe|render|analyze|lecture|batch
+│
+├── gui/
+│   ├── __init__.py
+│   ├── gradio_app.py              # Extended 8-tab Gradio UI (web + server mode)
+│   └── desktop_app.py             # Desktop launcher (browser or PyQt6 WebView)
+│
+├── api/
+│   ├── __init__.py
+│   └── server.py                  # FastAPI REST + SSE backend for server/client mode
 │
 └── ai_modules/
     ├── __init__.py
     ├── spleeter.py                # Stub: SeparationModule (raises NotImplementedError)
     ├── pitch_detection.py         # Stub: PitchDetector (raises NotImplementedError)
     └── chord_gen.py               # Stub: ChordGenerator (raises NotImplementedError)
-```
-
-### Planned structure (not yet created)
-
-```
-modules/           # Standalone CLI modules (the modular refactor)
-│   ├── downloader.py
-│   ├── separator.py
-│   ├── transcriber.py
-│   └── renderer.py
-cli/               # Lean CLI entry point
-│   └── main.py
-gui/               # Extended GUI
-│   ├── gradio_app.py
-│   └── desktop_app.py
-integrations/      # External service stubs (YouTube, lyrics)
-utils/             # Shared helpers
-requirements.txt   # Does not exist yet — must be created
 ```
 
 ---
@@ -86,8 +91,51 @@ Output directory: `Karaoke_Output/{song_title}/`
 
 ## Key Files — What They Do
 
-### `V64` (primary reference implementation)
-The most complete and up-to-date working implementation. Use this as the canonical reference when building new modules.
+### `core/backend.py` (canonical engine — use this)
+Extracted and cleaned-up version of V64's `BackendProcessor`. All modules, CLI, and GUI import from here.
+
+### `core/config.py`
+All shared constants: `WORK_DIR`, `DEVICE`, `TORCH_DTYPE`, `MODELS`, `ASS_HEADER`, `SUBTITLE_PRESETS`, `SUBTITLE_POSITIONS`, `cleanup_gpu()`.
+
+### `modules/downloader.py`
+Public API: `download(url, output_dir, fmt, logs)` → path.
+CLI: `python -m modules.downloader`.
+
+### `modules/separator.py`
+Public API: `separate(audio_path, output_dir, mode, force, logs)` → `(vocals, playback)`.
+CLI: `python -m modules.separator`.
+
+### `modules/transcriber.py`
+Public API: `transcribe(audio_path, output_dir, lang, output_formats, title, force, progress_callback, logs)` → `{fmt: path}`.
+Supports real-time streaming via `progress_callback(idx, total, text)`.
+CLI: `python -m modules.transcriber` with live progress bar to stderr.
+
+### `modules/renderer.py`
+Public API: `render(video, audio, subtitles, output_dir, output_name, use_bidi, font_size, color_hex, position, force, logs)` → path.
+CLI: `python -m modules.renderer` with `--preset` for named colour themes.
+
+### `cli/main.py`
+Thin orchestrator. Sub-commands: `pipeline`, `download`, `separate`, `transcribe`, `render`, `analyze`, `lecture`, `batch`.
+
+### `gui/gradio_app.py`
+8-tab extended Gradio UI:
+1. ⚡ תהליך אוטומטי — full pipeline
+2. 🛠️ כלים בנפרד — individual tools
+3. 📚 עיבוד רשימה — batch with status table
+4. 📝 עורך כתוביות — ASS timing/text editor
+5. 🎭 עורך פרודיה — original ↔ alternative lyrics
+6. 🎤 תמלול הרצאה — lecture transcription
+7. 🎼 ניתוח שיר — BPM + key
+8. ⚙️ הגדרות — settings + CLI reference
+
+### `gui/desktop_app.py`
+Launches Gradio in a background thread and opens the browser. Optional `--webview` mode embeds the UI in a PyQt6 WebView window.
+
+### `api/server.py`
+FastAPI REST backend. Endpoints: `/health`, `/info`, `/download`, `/separate`, `/transcribe`, `/transcribe/stream` (SSE), `/render`, `/pipeline/stream` (SSE), `/analyze`, `/files/{filename}`. Interactive docs at `/docs`.
+
+### `V64` (read-only reference)
+The original monolithic implementation before the modular refactor. Do not modify.
 
 **`BackendProcessor` class methods:**
 
@@ -240,21 +288,48 @@ External requirement: **FFmpeg** must be available (either system PATH or via `i
 
 ## Development Workflows
 
-### Running the current app
+### Running the modular system
 ```bash
-python app.py        # Starts Gradio web UI at http://localhost:7860
-python V64           # Runs V64 standalone (also launches Gradio)
-python V39           # Runs V39 standalone
+# Full Gradio web UI (recommended)
+python gui/gradio_app.py                     # http://localhost:7860
+python gui/gradio_app.py --server            # expose on 0.0.0.0 (LAN/server)
+python gui/gradio_app.py --port 8080 --share # public Gradio link
+
+# Desktop app (opens browser automatically)
+python gui/desktop_app.py
+python gui/desktop_app.py --webview          # PyQt6 embedded window
+
+# FastAPI server/client backend
+python api/server.py                         # http://0.0.0.0:8000
+uvicorn api.server:app --reload              # dev mode with hot-reload
+# API docs: http://localhost:8000/docs
 ```
 
-### Running individual tools (planned, not yet implemented)
+### CLI — individual modules
 ```bash
 python -m modules.downloader <url> [--format wav|mp4] [--output-dir DIR]
-python -m modules.separator <audio_file> [--mode 2|4] [--output-dir DIR]
-python -m modules.transcriber <audio_file> [--lang he|en] [--format srt|txt|ass]
-python -m modules.renderer <video> <audio> <subtitles.ass> [--output DIR]
-python cli/main.py pipeline <url>     # Full pipeline
-python cli/main.py batch <list.txt>   # Batch from file
+python -m modules.separator  <file> [--mode 2|4] [--output-dir DIR] [--force]
+python -m modules.transcriber <file> [--lang he|en|auto] [--format ass,srt,txt] [--no-progress]
+python -m modules.renderer   <video> <audio> <subs.ass> [--color #FFD700] [--bidi] [--preset "זהב קריוקי"]
+```
+
+### CLI — orchestrator
+```bash
+python cli/main.py pipeline  <url>           # Full pipeline
+python cli/main.py download  <url>
+python cli/main.py separate  <file> --mode 4
+python cli/main.py transcribe <file> --lang en --format ass,srt,txt
+python cli/main.py render    <video> <audio> <subs>
+python cli/main.py analyze   <file>          # BPM + key
+python cli/main.py lecture   <url|file>      # transcription only (no karaoke render)
+python cli/main.py batch     songs.txt       # one URL/query per line
+```
+
+### Legacy (reference only)
+```bash
+python app.py        # Original V71 Gradio UI
+python V64           # V64 standalone
+python V39           # V39 standalone
 ```
 
 ### Audio device debugging
@@ -341,21 +416,32 @@ All user-facing status uses emoji prefixes: `✅ 📥 ⏳ 🚀 ❌ ⚠️ 🎬`
 
 ---
 
-## Planned Features (Not Yet Implemented)
+## Feature Status
 
-These are features the project owner has specified as requirements:
-
-1. **Modular CLI** — each of the 4 pipeline stages runnable as a standalone script with `python -m modules.<name>`
-2. **Real-time transcription progress** — stream word chunks to the terminal/UI as Whisper processes them
-3. **SRT export** — in addition to ASS, export `.srt` subtitle files
-4. **Word timing editor** — visual table to adjust per-word timestamps before rendering
-5. **Lyrics parody editor** — side-by-side table: original transcription | user-written alternative lyrics
-6. **Song analysis tab** — BPM, musical key (already implemented in `analyze_audio()`; needs UI integration)
-7. **Desktop app** — launch Gradio in a thread and open a browser, or embed in a PyQt6 WebView
-8. **Server/client mode** — FastAPI backend + separate web frontend; Gradio UI connects to a remote server
-9. **Batch queue UI** — manage a list of songs with per-item status
-10. **Lecture transcription mode** — transcription without karaoke rendering
-11. **`requirements.txt`** — does not exist yet; must be created before any new contributor can run the project
+| Feature | Status |
+|---|---|
+| Modular CLI (4 standalone modules) | ✅ Implemented |
+| Real-time transcription progress (streaming) | ✅ Implemented |
+| SRT export | ✅ Implemented |
+| TXT export | ✅ Implemented |
+| Subtitle colour presets | ✅ Implemented |
+| Subtitle position (top/center/bottom) | ✅ Implemented |
+| Word timing editor (table) | ✅ Implemented |
+| Lyrics parody editor (original ↔ alternative) | ✅ Implemented |
+| Song analysis (BPM + key) | ✅ Implemented |
+| Desktop app (browser + PyQt6 WebView) | ✅ Implemented |
+| Server/client mode (FastAPI + SSE) | ✅ Implemented |
+| Batch queue UI with per-song status | ✅ Implemented |
+| Lecture transcription mode | ✅ Implemented |
+| `requirements.txt` | ✅ Implemented |
+| Auto language detection (`--lang auto`) | ✅ Implemented |
+| `--info-only` (metadata without download) | ✅ Implemented |
+| `--dry-run` / verbose/quiet modes | 🔲 Planned |
+| Lyrics-from-web fetch (genius.com, etc.) | 🔲 Planned |
+| Speaker diarization (identify singers) | 🔲 Planned |
+| Noise reduction pre-processing | 🔲 Planned |
+| Export project as ZIP | 🔲 Planned |
+| Processing history / cache log | 🔲 Planned |
 
 ---
 

@@ -1,0 +1,55 @@
+# ============================================================
+# AI_Audio_Lab — requirements.txt
+# Python 3.10+
+# Install: pip install -r requirements.txt
+# ============================================================
+
+# --- Video / audio download ---
+yt-dlp
+
+# --- Audio separation (UVR5 / Demucs) ---
+audio-separator[gpu]        # use audio-separator[cpu] on CPU-only machines
+
+# --- Deep learning ---
+torch>=2.0
+torchaudio
+
+# --- Whisper transcription ---
+transformers>=4.36
+accelerate
+
+# --- Audio I/O & analysis ---
+soundfile
+librosa
+scipy
+numpy
+
+# --- FFmpeg wrapper (bundled binary) ---
+imageio-ffmpeg
+
+# --- Web UI ---
+gradio>=4.0
+
+# --- REST API / server mode ---
+fastapi
+uvicorn[standard]
+python-multipart          # for FastAPI file uploads
+websockets
+
+# --- Hebrew / BIDI text ---
+arabic-reshaper
+python-bidi
+
+# --- Subtitle handling ---
+pysrt                     # SRT read/write
+
+# --- Data handling ---
+pandas
+
+# --- Real-time audio engine (core/engine.py) ---
+sounddevice
+
+# --- Desktop launcher ---
+# PyQt6 is optional — only needed for the embedded WebView desktop mode
+# PyQt6
+# PyQt6-WebEngine
