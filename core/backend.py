@@ -682,13 +682,18 @@ class BackendProcessor:
             return None
 
         tmp_out = os.path.join(folder, f"tmp_{uuid.uuid4().hex[:6]}.mp4")
-        ass_name = os.path.basename(render_ass).replace("\\", "/")
+
+        # FFmpeg's ass= filter needs forward-slash paths.
+        # On Windows, also escape the colon in the drive letter (C: → C\:).
+        ass_filter_path = render_ass.replace("\\", "/")
+        if len(ass_filter_path) >= 2 and ass_filter_path[1] == ":":
+            ass_filter_path = ass_filter_path[0] + "\\:" + ass_filter_path[2:]
 
         cmd = [
             self.ffmpeg_exe, "-y",
             "-i", video_path,
             "-i", audio_path,
-            "-filter_complex", f"[0:v]ass='{ass_name}'[v]",
+            "-filter_complex", f"[0:v]ass='{ass_filter_path}'[v]",
             "-map", "[v]",
             "-map", "1:a",
             "-c:v", "libx264", "-preset", "ultrafast",
@@ -697,15 +702,12 @@ class BackendProcessor:
             tmp_out,
         ]
 
-        prev_dir = os.getcwd()
-        os.chdir(folder)
         try:
             subprocess.run(
                 cmd, check=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=600,
             )
-            os.chdir(prev_dir)
             try:
                 os.remove(render_ass)
             except Exception:
@@ -716,7 +718,6 @@ class BackendProcessor:
             self.log(f"✅ הסתיים: {os.path.basename(final)}", current_logs)
             return final
         except Exception as e:
-            os.chdir(prev_dir)
             self.log(f"❌ שגיאה ברנדור: {e}", current_logs)
             return None
 
