@@ -1,0 +1,17 @@
+## .NET build artifacts
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+*.lock.json
+
+## Rider
+.idea/
+
+## Logs
+*.log

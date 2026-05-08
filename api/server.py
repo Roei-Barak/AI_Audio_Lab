@@ -20,6 +20,9 @@ Endpoints:
     POST /pipeline                       Full pipeline (SSE stream)
     POST /analyze                        BPM + key analysis
     GET  /status                         Resource manager status
+    GET  /waveform/{filename}            Downsampled waveform (KaraokeStudio.WPF)
+    GET  /thumbnail/{filename}           Video thumbnail JPG
+    POST /export                         Convert ASS → SRT / VTT
     GET  /files/{filename}               Serve output files
     DELETE /files/{filename}             Delete an output file
 
@@ -125,6 +128,10 @@ class PipelineRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     audio_path: str
+
+class ExportRequest(BaseModel):
+    ass_path: str
+    format: str = "srt"          # "srt" | "vtt"
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +395,134 @@ def analyze_endpoint(req: AnalyzeRequest):
         raise HTTPException(status_code=404, detail=f"קובץ לא נמצא: {audio}")
     result, logs = bp.analyze_audio(audio)
     return {"result": result, "logs": logs}
+
+
+# ---------------------------------------------------------------------------
+# Waveform / Thumbnail / Export — used by KaraokeStudio.WPF
+# ---------------------------------------------------------------------------
+
+@app.get("/waveform/{filename:path}")
+def waveform_endpoint(filename: str, target_samples: int = 2000):
+    """
+    Return a downsampled mono waveform for a given audio file.
+    Used by the WPF timeline to draw the audio track preview.
+    """
+    audio = _resolve_path(filename)
+    if not os.path.exists(audio):
+        raise HTTPException(status_code=404, detail=f"קובץ לא נמצא: {audio}")
+
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        data, sr = sf.read(audio, always_2d=False)
+        if hasattr(data, "ndim") and data.ndim > 1:
+            data = data.mean(axis=1)        # downmix to mono
+
+        # Downsample to ~target_samples points (peak per bin)
+        n = len(data)
+        if n > target_samples:
+            bin_size = n // target_samples
+            trimmed  = data[: bin_size * target_samples]
+            samples  = np.abs(trimmed.reshape(target_samples, bin_size)).max(axis=1)
+        else:
+            samples = np.abs(data)
+
+        peak = float(samples.max()) if len(samples) else 1.0
+        if peak > 0:
+            samples = samples / peak
+
+        return {
+            "samples":     [float(x) for x in samples],
+            "sample_rate": int(sr),
+            "duration":    n / sr if sr else 0.0,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"חישוב waveform נכשל: {e}")
+
+
+@app.get("/thumbnail/{filename:path}")
+def thumbnail_endpoint(filename: str, time_sec: float = 5.0):
+    """
+    Return a JPG thumbnail extracted from the given video file.
+    Cached on disk under <video>.thumb.jpg.
+    """
+    video = _resolve_path(filename)
+    if not os.path.exists(video):
+        raise HTTPException(status_code=404, detail=f"קובץ לא נמצא: {video}")
+
+    thumb = f"{video}.thumb.jpg"
+    if not os.path.exists(thumb):
+        try:
+            import imageio_ffmpeg
+            import subprocess
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            subprocess.run(
+                [ffmpeg, "-y", "-ss", str(time_sec), "-i", video,
+                 "-vframes", "1", "-q:v", "3", "-vf", "scale=320:-1", thumb],
+                check=True, capture_output=True,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"יצירת thumbnail נכשלה: {e}")
+    return FileResponse(thumb, media_type="image/jpeg")
+
+
+@app.post("/export")
+def export_endpoint(req: ExportRequest):
+    """Convert an ASS subtitle file to SRT or VTT."""
+    ass = _resolve_path(req.ass_path)
+    if not os.path.exists(ass):
+        raise HTTPException(status_code=404, detail=f"קובץ ASS לא נמצא: {ass}")
+
+    fmt = (req.format or "srt").lower()
+    if fmt not in ("srt", "vtt"):
+        raise HTTPException(status_code=400, detail="format חייב להיות srt או vtt")
+
+    try:
+        import re
+
+        def parse_ass_time(s: str):
+            # H:MM:SS.CC
+            h, m, rest = s.split(":")
+            sec, cs   = rest.split(".")
+            return int(h) * 3600 + int(m) * 60 + int(sec) + int(cs) / 100.0
+
+        def fmt_srt(t: float):
+            h = int(t // 3600); m = int((t % 3600) // 60)
+            s = int(t % 60);    ms = int((t - int(t)) * 1000)
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        def fmt_vtt(t: float):
+            return fmt_srt(t).replace(",", ".")
+
+        events = []
+        with open(ass, "r", encoding="utf-8-sig") as f:
+            for line in f:
+                if not line.startswith("Dialogue:"):
+                    continue
+                parts = line.split(",", 9)
+                if len(parts) < 10:
+                    continue
+                start = parse_ass_time(parts[1].strip())
+                end   = parse_ass_time(parts[2].strip())
+                text  = parts[9].rstrip()
+                # Strip ASS override tags like {\\an8}
+                text = re.sub(r"{\\\\?[^}]+}", "", text)
+                events.append((start, end, text))
+
+        out_path = os.path.splitext(ass)[0] + f".{fmt}"
+        with open(out_path, "w", encoding="utf-8") as f:
+            if fmt == "vtt":
+                f.write("WEBVTT\n\n")
+                for s, e, t in events:
+                    f.write(f"{fmt_vtt(s)} --> {fmt_vtt(e)}\n{t}\n\n")
+            else:
+                for i, (s, e, t) in enumerate(events, 1):
+                    f.write(f"{i}\n{fmt_srt(s)} --> {fmt_srt(e)}\n{t}\n\n")
+
+        return {"path": out_path, "relative": _rel(out_path), "events": len(events)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ייצוא נכשל: {e}")
 
 
 @app.delete("/files/{filename:path}")
