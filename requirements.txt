@@ -1,0 +1,40 @@
+# ========================
+# AI_Audio_Lab Requirements
+# ========================
+# Install: pip install -r requirements.txt
+# Requires: NVIDIA GPU + CUDA drivers, FFmpeg, PortAudio
+
+# --- Core ML ---
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# --- Audio Processing ---
+sounddevice
+soundfile
+librosa
+numpy<2.0
+
+# --- AI Models ---
+transformers>=4.35.0
+audio-separator>=0.17.0
+
+# --- Download ---
+yt-dlp
+
+# --- Video ---
+imageio[ffmpeg]
+imageio_ffmpeg
+
+# --- UI ---
+gradio>=4.0.0
+PyQt6>=6.4.0
+
+# --- Hebrew Text ---
+python-bidi
+arabic-reshaper
+
+# --- Data ---
+pandas
+
+# --- Utilities ---
+scipy
