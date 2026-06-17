@@ -10,3 +10,5 @@ librosa
 arabic-reshaper
 python-bidi
 pathlib
+pyjwt>=2.8
+bcrypt>=4.1

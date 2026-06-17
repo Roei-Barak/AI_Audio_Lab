@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - KARAOKE_AUTH_MODE=${KARAOKE_AUTH_MODE:-required}
+      - KARAOKE_JWT_SECRET=${KARAOKE_JWT_SECRET:-change-me-in-production}
+      - KARAOKE_CORS_ORIGINS=${KARAOKE_CORS_ORIGINS:-*}
+    volumes:
+      - ../../Karaoke_Output:/app/Karaoke_Output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - KARAOKE_DOMAIN=${KARAOKE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

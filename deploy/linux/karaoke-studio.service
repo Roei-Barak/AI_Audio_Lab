@@ -1,0 +1,19 @@
+[Unit]
+Description=KaraokeStudio – AI Karaoke Pipeline Server
+After=network.target
+
+[Service]
+Type=simple
+User=karaoke
+WorkingDirectory=/opt/karaoke-studio
+ExecStart=/opt/karaoke-studio/venv/bin/python -m uvicorn api.server:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+Environment="KARAOKE_AUTH_MODE=required"
+Environment="PATH=/opt/karaoke-studio/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=karaoke-studio
+
+[Install]
+WantedBy=multi-user.target
