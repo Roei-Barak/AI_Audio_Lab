@@ -11,6 +11,15 @@
     <FlowDirection>RightToLeft</FlowDirection>
   </PropertyGroup>
 
+  <!-- Release publish: self-contained single-file for win-x64 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- MVVM toolkit -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />

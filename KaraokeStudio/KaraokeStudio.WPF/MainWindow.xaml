@@ -78,6 +78,10 @@
                                TextWrapping="Wrap" Padding="8" FlowDirection="LeftToRight"/>
                 </ScrollViewer>
             </TabItem>
+
+            <TabItem Header="⚙️ הגדרות">
+                <pages:SettingsPage/>
+            </TabItem>
         </TabControl>
 
         <!-- ── Collapsible backend log strip ── -->

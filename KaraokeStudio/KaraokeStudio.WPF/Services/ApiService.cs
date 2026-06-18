@@ -74,10 +74,14 @@ public class ApiService
         PropertyNameCaseInsensitive = true,
     };
 
-    public ApiService(string baseUrl = BackendProcess.ApiBaseUrl)
+    public ApiService(string? baseUrl = null)
     {
-        _base = baseUrl;
-        _http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(30) };
+        _base = (baseUrl ?? AppConfig.Instance.ApiBaseUrl).TrimEnd('/');
+        _http = new HttpClient { BaseAddress = new Uri(_base + "/"), Timeout = TimeSpan.FromMinutes(30) };
+        var token = AppConfig.Instance.AuthToken;
+        if (token is not null)
+            _http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
     }
 
     // ── Health ────────────────────────────────────────────────────────────────
