@@ -1,0 +1,129 @@
+<Page x:Class="KaraokeStudio.WPF.Views.Pages.SettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Title="הגדרות"
+      FlowDirection="RightToLeft">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#1E1E1E">
+        <StackPanel Margin="24" MaxWidth="600">
+
+            <!-- Server section (hidden in Standalone / AuthMode=none) -->
+            <Border Visibility="{Binding ShowServerSection, Converter={StaticResource BoolToVis}}"
+                    Background="#252526" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="⚙️ הגדרות שרת" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock Text="כתובת שרת" Style="{StaticResource FieldLabel}"/>
+                    <TextBox Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}"
+                             FlowDirection="LeftToRight" Margin="0,0,0,12"/>
+                    <Button Content="שמור כתובת שרת"
+                            Command="{Binding SaveServerCommand}"
+                            Style="{StaticResource PrimaryButton}"
+                            HorizontalAlignment="Left"/>
+                    <Border Visibility="{Binding ServerMsgVisible, Converter={StaticResource BoolToVis}}"
+                            Background="#003300" BorderBrush="#006600" BorderThickness="1"
+                            CornerRadius="4" Padding="10,6" Margin="0,10,0,0">
+                        <TextBlock Text="{Binding ServerMessage}" Foreground="#66FF66" FontSize="12"/>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Change password section -->
+            <Border Background="#252526" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="🔑 שינוי סיסמה" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock Text="סיסמה נוכחית" Style="{StaticResource FieldLabel}"/>
+                    <PasswordBox x:Name="PwdCurrent" Margin="0,0,0,10"/>
+                    <TextBlock Text="סיסמה חדשה" Style="{StaticResource FieldLabel}"/>
+                    <PasswordBox x:Name="PwdNew" Margin="0,0,0,10"/>
+                    <TextBlock Text="אישור סיסמה חדשה" Style="{StaticResource FieldLabel}"/>
+                    <PasswordBox x:Name="PwdConfirm" Margin="0,0,0,14"/>
+                    <Button Content="שנה סיסמה" Click="ChangePassword_Click"
+                            Style="{StaticResource PrimaryButton}"
+                            HorizontalAlignment="Left"/>
+                    <Border Visibility="{Binding PwdMsgVisible, Converter={StaticResource BoolToVis}}"
+                            Background="#003300" BorderBrush="#006600" BorderThickness="1"
+                            CornerRadius="4" Padding="10,6" Margin="0,10,0,0">
+                        <TextBlock Text="{Binding PwdMessage}" Foreground="#66FF66" FontSize="12"/>
+                    </Border>
+                    <Border Visibility="{Binding PwdErrVisible, Converter={StaticResource BoolToVis}}"
+                            Background="#3F0000" BorderBrush="#C00" BorderThickness="1"
+                            CornerRadius="4" Padding="10,6" Margin="0,10,0,0">
+                        <TextBlock Text="{Binding PwdError}" Foreground="#FF6666" FontSize="12"/>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Admin: user management -->
+            <Border Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVis}}"
+                    Background="#252526" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="👥 ניהול משתמשים" Style="{StaticResource SectionHeader}"/>
+
+                    <DataGrid ItemsSource="{Binding Users}"
+                              SelectedItem="{Binding SelectedUser}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              HeadersVisibility="Column"
+                              Height="180"
+                              IsReadOnly="True"
+                              Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="שם משתמש" Binding="{Binding Username}" Width="*"/>
+                            <DataGridTextColumn Header="תפקיד"    Binding="{Binding Role}"     Width="80"/>
+                            <DataGridTextColumn Header="תאריך יצירה"
+                                                Binding="{Binding CreatedAt, StringFormat=\{0:dd/MM/yyyy\}}"
+                                                Width="110"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- Add user row -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0"
+                                 Text="{Binding NewUsername, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="שם משתמש חדש" FlowDirection="LeftToRight"/>
+                        <PasswordBox Grid.Column="1" x:Name="NewPwdBox" Margin="0,0,8,0" ToolTip="סיסמה"/>
+                        <ComboBox Grid.Column="2" Margin="0,0,8,0" Width="80"
+                                  SelectedValue="{Binding NewRole}"
+                                  SelectedValuePath="Content">
+                            <ComboBoxItem Content="user" IsSelected="True"/>
+                            <ComboBoxItem Content="admin"/>
+                        </ComboBox>
+                        <Button Grid.Column="3" Content="➕ הוסף"
+                                Click="AddUser_Click"
+                                Style="{StaticResource PrimaryButton}"/>
+                    </Grid>
+
+                    <Button Content="🗑️ מחק משתמש נבחר"
+                            Command="{Binding DeleteUserCommand}"
+                            Style="{StaticResource DangerButton}"
+                            HorizontalAlignment="Left"/>
+
+                    <Border Visibility="{Binding UserMsgVisible, Converter={StaticResource BoolToVis}}"
+                            Background="#003300" BorderBrush="#006600" BorderThickness="1"
+                            CornerRadius="4" Padding="10,6" Margin="0,10,0,0">
+                        <TextBlock Text="{Binding UserMessage}" Foreground="#66FF66" FontSize="12"/>
+                    </Border>
+                    <Border Visibility="{Binding UserErrVisible, Converter={StaticResource BoolToVis}}"
+                            Background="#3F0000" BorderBrush="#C00" BorderThickness="1"
+                            CornerRadius="4" Padding="10,6" Margin="0,10,0,0">
+                        <TextBlock Text="{Binding UserError}" Foreground="#FF6666" FontSize="12"/>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Logout -->
+            <Button Content="🚪 התנתקות"
+                    Visibility="{Binding ShowLogout, Converter={StaticResource BoolToVis}}"
+                    Command="{Binding LogoutCommand}"
+                    Style="{StaticResource DangerButton}"
+                    HorizontalAlignment="Left"/>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>
