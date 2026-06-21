@@ -51,7 +51,7 @@ public partial class LoginViewModel : ObservableObject
         BtnText = "⏳ מתחבר...";
         try
         {
-            using var http = new HttpClient { BaseAddress = new Uri(ServerUrl.TrimEnd('/')) };
+            using var http = new HttpClient { BaseAddress = new Uri(ServerUrl.TrimEnd('/') + "/") };
             var body = JsonSerializer.Serialize(new { username = Username, password });
             var resp = await http.PostAsync("/api/auth/login",
                 new StringContent(body, Encoding.UTF8, "application/json"));
@@ -59,7 +59,7 @@ public partial class LoginViewModel : ObservableObject
             if (!resp.IsSuccessStatusCode)
             {
                 var err = await resp.Content.ReadAsStringAsync();
-                _showError($"שגיאה {(int)resp.StatusCode}: {ParseDetail(err)}"); return;
+                _showError($"שגיאה {(int)resp.StatusCode}: {ApiHelpers.ParseDetail(err)}"); return;
             }
 
             var result = await resp.Content.ReadFromJsonAsync<LoginResponse>(new JsonSerializerOptions
@@ -75,20 +75,11 @@ public partial class LoginViewModel : ObservableObject
 
             var main = new MainWindow();
             main.Show();
-            Window.GetWindow(App.Current.Windows[0])?.Close();
+            // Windows[0] is the login host window (shown before MainWindow).
+            App.Current.Windows[0].Close();
         }
         catch (Exception ex) { _showError($"שגיאת חיבור: {ex.Message}"); }
         finally { BtnText = "כניסה"; }
-    }
-
-    private static string ParseDetail(string json)
-    {
-        try
-        {
-            var el = JsonSerializer.Deserialize<JsonElement>(json);
-            return el.TryGetProperty("detail", out var d) ? d.GetString() ?? json : json;
-        }
-        catch { return json; }
     }
 
     private record LoginResponse(

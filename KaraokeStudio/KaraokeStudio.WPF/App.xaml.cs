@@ -23,7 +23,15 @@ public partial class App : Application
             return;
         }
 
-        // Show login page hosted in a plain window
+        ShowLoginWindow();
+    }
+
+    /// <summary>
+    /// Creates and shows the login host window.
+    /// Single definition — called from startup and from logout.
+    /// </summary>
+    internal static void ShowLoginWindow()
+    {
         var frame = new Frame { NavigationUIVisibility = NavigationUIVisibility.Hidden };
         frame.Navigate(new LoginPage());
         var win = new Window

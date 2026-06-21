@@ -33,10 +33,13 @@ _SPA_DIR     = Path(__file__).parent.parent / "web" / "dist"
 
 app = FastAPI(title="KaraokeStudio API", version="1.0.0")
 
+# The CORS spec forbids allow_credentials=True when allow_origins=["*"].
+# Only enable credentials when the caller has set explicit origin(s).
+_cors_wildcard = CORS_ORIGINS == ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )

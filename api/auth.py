@@ -17,9 +17,19 @@ from api.db import (
 )
 
 AUTH_MODE  = os.environ.get("KARAOKE_AUTH_MODE", "required")   # 'required' | 'none'
-JWT_SECRET = os.environ.get("KARAOKE_JWT_SECRET", "change-me-in-production-please")
+_DEFAULT_SECRET = "change-me-in-production-please"
+JWT_SECRET = os.environ.get("KARAOKE_JWT_SECRET", _DEFAULT_SECRET)
 JWT_ALG    = "HS256"
 JWT_EXP_H  = 24 * 7   # 1 week
+
+if AUTH_MODE != "none" and JWT_SECRET == _DEFAULT_SECRET:
+    import sys
+    print(
+        "[SECURITY WARNING] KARAOKE_JWT_SECRET is not set — using the insecure default. "
+        "Anyone who reads the source code can forge admin tokens. "
+        "Set KARAOKE_JWT_SECRET to a long random string in production!",
+        file=sys.stderr, flush=True,
+    )
 
 
 # ── Passwords ─────────────────────────────────────────────────────────────────
@@ -56,7 +66,7 @@ def verify_token(token: str) -> Optional[dict]:
 async def get_current_user(authorization: str = Header(default="")) -> Optional[User]:
     if AUTH_MODE == "none":
         return User(id=0, username="local", password_hash="", role="admin",
-                    created_at=datetime.utcnow())
+                    created_at=datetime.now(timezone.utc))
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     payload = verify_token(authorization[7:])

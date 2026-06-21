@@ -43,6 +43,11 @@ public partial class SettingsPage : System.Windows.Controls.Page
 
 public partial class SettingsViewModel : ObservableObject
 {
+    // Shared HttpClient — avoids per-call socket exhaustion.
+    // URL and token are captured at construction; restart required after URL change
+    // (same behaviour as ApiService, which also fixes BaseAddress at construction).
+    private readonly HttpClient _authHttp;
+
     [ObservableProperty] private string  _serverUrl        = AppConfig.Instance.ApiBaseUrl;
     [ObservableProperty] private bool    _serverMsgVisible = false;
     [ObservableProperty] private string  _serverMessage    = "";
@@ -61,10 +66,24 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool    _userErrVisible   = false;
     [ObservableProperty] private string  _userError        = "";
 
+    // These reflect AuthMode which is session-stable (set at startup, unchanged until restart).
     public bool ShowServerSection => AppConfig.Instance.AuthMode != "none";
     public bool ShowLogout        => AppConfig.Instance.AuthMode != "none";
     public bool IsAdmin           => AppConfig.Instance.AuthMode == "none" ||
                                      GetRoleFromToken() == "admin";
+
+    public SettingsViewModel()
+    {
+        _authHttp = new HttpClient
+        {
+            BaseAddress = new Uri(AppConfig.Instance.ApiBaseUrl.TrimEnd('/') + "/"),
+            Timeout     = TimeSpan.FromSeconds(30),
+        };
+        var token = AppConfig.Instance.AuthToken;
+        if (token is not null)
+            _authHttp.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+    }
 
     // ── Save server URL ───────────────────────────────────────────────────
 
@@ -78,11 +97,11 @@ public partial class SettingsViewModel : ObservableObject
 
     // ── Change password (called from code-behind) ─────────────────────────
 
-    public async Task ChangePasswordAsync(string oldPwd, string newPwd, string confirmPwd)
+    public async Task ChangePasswordAsync(string currentPwd, string newPwd, string confirmPwd)
     {
         PwdMsgVisible = false;
         PwdErrVisible = false;
-        if (string.IsNullOrEmpty(oldPwd) || string.IsNullOrEmpty(newPwd))
+        if (string.IsNullOrEmpty(currentPwd) || string.IsNullOrEmpty(newPwd))
         {
             ShowPwdErr("יש למלא את כל שדות הסיסמה"); return;
         }
@@ -93,14 +112,13 @@ public partial class SettingsViewModel : ObservableObject
 
         try
         {
-            using var http = CreateHttpClient();
-            var body = JsonSerializer.Serialize(new { old_password = oldPwd, new_password = newPwd });
-            var resp = await http.PostAsync("/api/auth/change-password",
+            var body = JsonSerializer.Serialize(new { current_password = currentPwd, new_password = newPwd });
+            var resp = await _authHttp.PostAsync("/api/auth/change-password",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!resp.IsSuccessStatusCode)
             {
                 var err = await resp.Content.ReadAsStringAsync();
-                ShowPwdErr(ParseDetail(err)); return;
+                ShowPwdErr(ApiHelpers.ParseDetail(err)); return;
             }
             ShowPwdMsg("הסיסמה שונתה בהצלחה");
         }
@@ -114,8 +132,7 @@ public partial class SettingsViewModel : ObservableObject
         if (!IsAdmin) return;
         try
         {
-            using var http = CreateHttpClient();
-            var list = await http.GetFromJsonAsync<List<ApiUser>>("/api/auth/users",
+            var list = await _authHttp.GetFromJsonAsync<List<ApiUser>>("/api/auth/users",
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
             if (list is null) return;
             App.Dispatch(() =>
@@ -141,17 +158,16 @@ public partial class SettingsViewModel : ObservableObject
         }
         try
         {
-            using var http = CreateHttpClient();
             var body = JsonSerializer.Serialize(new { username = NewUsername, password, role = NewRole });
-            var resp = await http.PostAsync("/api/auth/users",
+            var resp = await _authHttp.PostAsync("/api/auth/users",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             if (!resp.IsSuccessStatusCode)
             {
                 var err = await resp.Content.ReadAsStringAsync();
-                ShowUserErr(ParseDetail(err)); return;
+                ShowUserErr(ApiHelpers.ParseDetail(err)); return;
             }
             NewUsername = "";
-            ShowUserMsg($"המשתמש נוצר בהצלחה");
+            ShowUserMsg("המשתמש נוצר בהצלחה");
             await LoadUsersAsync();
         }
         catch (Exception ex) { ShowUserErr($"שגיאת חיבור: {ex.Message}"); }
@@ -169,12 +185,11 @@ public partial class SettingsViewModel : ObservableObject
         }
         try
         {
-            using var http = CreateHttpClient();
-            var resp = await http.DeleteAsync($"/api/auth/users/{SelectedUser.Id}");
+            var resp = await _authHttp.DeleteAsync($"/api/auth/users/{SelectedUser.Id}");
             if (!resp.IsSuccessStatusCode)
             {
                 var err = await resp.Content.ReadAsStringAsync();
-                ShowUserErr(ParseDetail(err)); return;
+                ShowUserErr(ApiHelpers.ParseDetail(err)); return;
             }
             ShowUserMsg("המשתמש נמחק");
             await LoadUsersAsync();
@@ -188,23 +203,7 @@ public partial class SettingsViewModel : ObservableObject
     private void Logout()
     {
         AppConfig.Instance.ClearAuth();
-
-        var frame = new System.Windows.Controls.Frame
-        {
-            NavigationUIVisibility = System.Windows.Navigation.NavigationUIVisibility.Hidden
-        };
-        frame.Navigate(new LoginPage());
-        var win = new Window
-        {
-            Title = "KaraokeStudio – כניסה",
-            Content = frame,
-            Width = 440, Height = 520,
-            ResizeMode = ResizeMode.NoResize,
-            WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            Background = System.Windows.Media.Brushes.Transparent,
-            FlowDirection = FlowDirection.RightToLeft
-        };
-        win.Show();
+        App.ShowLoginWindow();
 
         foreach (Window w in System.Windows.Application.Current.Windows)
         {
@@ -213,19 +212,6 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
-
-    private static HttpClient CreateHttpClient()
-    {
-        var http = new HttpClient
-        {
-            BaseAddress = new Uri(AppConfig.Instance.ApiBaseUrl.TrimEnd('/')),
-            Timeout = TimeSpan.FromSeconds(30)
-        };
-        var token = AppConfig.Instance.AuthToken;
-        if (token is not null)
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return http;
-    }
 
     private static string? GetRoleFromToken()
     {
@@ -236,22 +222,13 @@ public partial class SettingsViewModel : ObservableObject
         try
         {
             var payload = parts[1];
+            // JWT uses Base64Url (no padding); add padding before decoding
             payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
             var json = Encoding.UTF8.GetString(Convert.FromBase64String(payload));
             var el = JsonSerializer.Deserialize<JsonElement>(json);
             return el.TryGetProperty("role", out var r) ? r.GetString() : null;
         }
         catch { return null; }
-    }
-
-    private static string ParseDetail(string json)
-    {
-        try
-        {
-            var el = JsonSerializer.Deserialize<JsonElement>(json);
-            return el.TryGetProperty("detail", out var d) ? d.GetString() ?? json : json;
-        }
-        catch { return json; }
     }
 
     private void ShowServerMsg(string msg) { ServerMessage = msg; ServerMsgVisible = true; }

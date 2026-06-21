@@ -193,12 +193,15 @@ public class ApiService
     // ── File serving ──────────────────────────────────────────────────────────
 
     public string FileUrl(string relativePath)
-        => $"{_base}/files/{relativePath.Replace('\\', '/')}";
+        => $"{_base}/files/{Uri.EscapeDataString(relativePath.Replace('\\', '/'))}";
 
     public async Task DownloadFileAsync(string relativePath, string localDest)
     {
-        var bytes = await _http.GetByteArrayAsync(FileUrl(relativePath));
-        await File.WriteAllBytesAsync(localDest, bytes);
+        using var response = await _http.GetAsync(FileUrl(relativePath), HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        await using var src  = await response.Content.ReadAsStreamAsync();
+        await using var dest = File.OpenWrite(localDest);
+        await src.CopyToAsync(dest);
     }
 
     // ── SSE generic reader ────────────────────────────────────────────────────
@@ -209,7 +212,7 @@ public class ApiService
         [EnumeratorCancellation] CancellationToken ct)
     {
         var content  = new StringContent(JsonSerializer.Serialize(body, _json), Encoding.UTF8, "application/json");
-        var response = await _http.PostAsync(endpoint, content, ct);
+        using var response = await _http.PostAsync(endpoint, content, ct);
         response.EnsureSuccessStatusCode();
 
         using var stream = await response.Content.ReadAsStreamAsync(ct);
