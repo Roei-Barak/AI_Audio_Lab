@@ -5,6 +5,8 @@ import { store, useStore } from '../store/store';
 import { ui, useUI, type ModalKind } from '../store/ui';
 import { ROLE_L, inviteUrl, useWS, ws, type Role } from '../store/workspace';
 import { hhmm } from '../lib/format';
+import { serverProject } from '../lib/actions';
+import { deleteRemoteProject, isServer, submitJob } from '../store/server';
 
 const META: Record<ModalKind, [string, string, number]> = {
   conflict: ['התנגשות גרסאות', 'ph ph-git-merge', 620],
@@ -52,18 +54,24 @@ export function ModalHost() {
 }
 
 function Conflict() {
-  const { project: p } = useStore();
+  const { project: p, conflictTheirs } = useStore();
   const [side, setSide] = useState<'mine' | 'theirs'>('mine');
   if (!p) return null;
   const mine = p.lines[THEIRS_LINE_INDEX] ? lineText(p.lines[THEIRS_LINE_INDEX]) : '';
-  const sides: ['mine' | 'theirs', string, string, string][] = [
-    ['mine', 'השינויים שלי', 'נשמר בדפדפן', mine],
-    ['theirs', 'של ' + OTHER_USER, 'נשמר לפני רגע', THEIRS_LINE_TEXT],
-  ];
+  const diffIdx = conflictTheirs ? Math.max(0, p.lines.findIndex((l, i) => lineText(l) !== (conflictTheirs.lines[i] ? lineText(conflictTheirs.lines[i]) : ''))) : THEIRS_LINE_INDEX;
+  const sides: ['mine' | 'theirs', string, string, string][] = conflictTheirs
+    ? [
+        ['mine', 'השינויים שלי', p.lines.length + ' שורות', p.lines[diffIdx] ? lineText(p.lines[diffIdx]) : ''],
+        ['theirs', 'הגרסה בשרת', conflictTheirs.lines.length + ' שורות · גרסה ' + conflictTheirs.serverRev, conflictTheirs.lines[diffIdx] ? lineText(conflictTheirs.lines[diffIdx]) : ''],
+      ]
+    : [
+        ['mine', 'השינויים שלי', 'נשמר בדפדפן', mine],
+        ['theirs', 'של ' + OTHER_USER, 'נשמר לפני רגע', THEIRS_LINE_TEXT],
+      ];
   return (
     <>
       <div style={{ fontSize: 13.5, color: 'var(--color-neutral-300)', textWrap: 'pretty' }}>
-        {OTHER_USER} שמרה שינוי בשורה {THEIRS_LINE_INDEX + 1} בזמן שערכת. השינויים שלך שמורים בדפדפן. (התנגשות מדומה: אין שרת או משתמש נוסף באב־טיפוס.)
+        {conflictTheirs ? 'מישהו שמר גרסה חדשה של הפרויקט בשרת בזמן שערכת. השינויים שלך שמורים בדפדפן ולא אבדו.' : OTHER_USER + ' שמרה שינוי בשורה ' + (THEIRS_LINE_INDEX + 1) + ' בזמן שערכת. השינויים שלך שמורים בדפדפן. (התנגשות מדומה: אין שרת או משתמש נוסף.)'}
       </div>
       <div role="radiogroup" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
         {sides.map(([k, t, m, v]) => (
@@ -80,7 +88,7 @@ function Conflict() {
               <span className="dim" style={{ marginInlineStart: 'auto', fontSize: 11.5 }}>{m}</span>
             </div>
             <div style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
-              <span className="dim" style={{ width: 56 }}>שורה {THEIRS_LINE_INDEX + 1}</span>
+              <span className="dim" style={{ width: 56 }}>שורה {(conflictTheirs ? diffIdx : THEIRS_LINE_INDEX) + 1}</span>
               <span dir="auto" style={{ flex: 1 }}>{v}</span>
             </div>
           </button>
@@ -94,11 +102,11 @@ function Conflict() {
             ws.saveVersion('לפני פתרון התנגשות');
             store.resolveConflict(side);
             ui.close();
-            ui.toast(side === 'mine' ? 'השינויים שלך נשמרו · הגרסה של ' + OTHER_USER + ' בהיסטוריה' : 'הגרסה של ' + OTHER_USER + ' נטענה · השינויים שלך בהיסטוריה');
+            ui.toast(conflictTheirs ? (side === 'mine' ? 'הגרסה שלך נשמרה בשרת' : 'הגרסה מהשרת נטענה · ⌘Z מחזיר את שלך') : side === 'mine' ? 'השינויים שלך נשמרו · הגרסה של ' + OTHER_USER + ' בהיסטוריה' : 'הגרסה של ' + OTHER_USER + ' נטענה · השינויים שלך בהיסטוריה');
           }}
         >
           <i className="ph ph-check" />
-          {side === 'mine' ? 'שמור את שלי' : 'קבל את של ' + OTHER_USER}
+          {side === 'mine' ? 'שמור את שלי' : conflictTheirs ? 'טען את הגרסה מהשרת' : 'קבל את של ' + OTHER_USER}
         </button>
       </div>
     </>
@@ -117,6 +125,79 @@ interface Suggestion {
 
 /** Simulated AI re-run: the new output is shown as a suggestion; manual fixes are never offered for change. */
 function AiRerun() {
+  const { project: p } = useStore();
+  if (p && serverProject()) return <AiRerunServer />;
+  return <AiRerunDemo />;
+}
+
+/** Server mode: the re-run output arrives as project.suggestion; manually fixed lines are never offered for change. */
+function AiRerunServer() {
+  const { project: p, job } = useStore();
+  const [dec, setDec] = useState<Record<number, 'a' | 'r'>>({});
+  if (!p) return null;
+  const running = job?.serverId && job.status === 'running';
+  if (!p.suggestion) {
+    return (
+      <>
+        <div className="muted" style={{ fontSize: 13.5 }}>
+          {running ? 'השרת מעבד כרגע. ההצעה תופיע כאן בסיום.' : 'הרצה מחדש מתמללת ומסנכרנת שוב בשרת. התוצאה לא תדרוס את העבודה שלך: היא תוצג כאן כהצעה, שורה מול שורה.'}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={() => ui.close()}>סגור</button>
+          <button className="btn btn-primary" disabled={!!running} onClick={async () => { try { await submitJob('process', { rerun: true }); ui.close(); ui.toast('תמלול מחדש נשלח לשרת'); } catch (e) { ui.toast((e as Error).message); } }}>
+            <i className="ph ph-sparkle" />הרץ מחדש בשרת
+          </button>
+        </div>
+      </>
+    );
+  }
+  const sug = p.suggestion.lines;
+  const rows = p.lines.map((l, i) => ({ i, cur: lineText(l), next: sug[i] ? lineText(sug[i]) : '', locked: l.manual || l.words.some((w) => w.manual) })).filter((r) => r.next && r.next !== r.cur);
+  const accepted = rows.filter((r) => !r.locked && dec[r.i] === 'a');
+  const finish = (apply: boolean) => {
+    if (apply && accepted.length) ws.saveVersion('לפני החלת הצעות AI');
+    store.edit(apply ? 'הצעות AI שנבחרו הוחלו (' + accepted.length + ')' : 'הצעת AI נדחתה', (P) => {
+      if (apply) accepted.forEach((r) => {
+        const s2 = sug[r.i];
+        if (P.lines[r.i] && s2) P.lines[r.i] = { ...s2, id: P.lines[r.i].id, speaker: P.lines[r.i].speaker, words: s2.words.map((w) => ({ ...w, conf: 'med', manual: false })) };
+      });
+      P.suggestion = null;
+      P.rerun = false;
+    });
+    ui.close();
+    ui.toast(apply ? accepted.length + ' הצעות הוחלו · ⌘Z לביטול' : 'ההצעה נדחתה · הגרסה הנוכחית לא השתנתה');
+  };
+  return (
+    <>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <span className="tag tag-neutral">תמלול מחדש · שרת Lyra</span>
+        <span className="tag tag-outline">שום דבר לא הוחלף אוטומטית</span>
+      </div>
+      {rows.length === 0 ? <div className="muted" style={{ fontSize: 13.5 }}>ההרצה החדשה זהה לגרסה הנוכחית.</div> : rows.map((r) => (
+        <div key={r.i} style={{ display: 'grid', gridTemplateColumns: '44px minmax(0,1fr) minmax(0,1fr) 140px', gap: 10, alignItems: 'center', padding: '9px 8px', borderRadius: 'var(--radius-md)', background: dec[r.i] === 'a' ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)' : 'var(--color-bg)' }}>
+          <span className="dim" style={{ fontSize: 12 }}>{r.i + 1}</span>
+          <span dir="auto" style={{ fontSize: 13.5, color: 'var(--color-neutral-300)' }}>{r.cur}</span>
+          <span dir="auto" style={{ fontSize: 13.5, color: r.locked ? 'var(--color-neutral-500)' : undefined }}>{r.locked ? 'ללא הצעה · השורה תוקנה ידנית' : r.next}</span>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+            {r.locked ? <span className="tag tag-neutral"><i className="ph ph-lock-simple" />תיקון ידני</span> : (
+              <>
+                <button className="btn btn-secondary" aria-pressed={dec[r.i] === 'a'} onClick={() => setDec({ ...dec, [r.i]: 'a' })} style={{ fontSize: 12 }}>קבל</button>
+                <button className="btn btn-ghost" aria-pressed={dec[r.i] === 'r'} onClick={() => setDec({ ...dec, [r.i]: 'r' })} style={{ fontSize: 12 }}>דחה</button>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
+      <div className="dim" style={{ fontSize: 11.5 }}>ביטחון המודל הוא הערכה ולא דיוק מאומת. ההחלה היא עריכה אחת שאפשר לבטל.</div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button className="btn btn-secondary" onClick={() => finish(false)}>דחה הכל</button>
+        <button className="btn btn-primary" disabled={!accepted.length} onClick={() => finish(true)}><i className="ph ph-check" />החל {accepted.length} הצעות שנבחרו</button>
+      </div>
+    </>
+  );
+}
+
+function AiRerunDemo() {
   const { project: p } = useStore();
   const [dec, setDec] = useState<Record<string, 'a' | 'r'>>({});
   const rows = useMemo<Suggestion[]>(() => {
@@ -382,7 +463,14 @@ function DeleteProject() {
       <input className="input" dir="auto" aria-label="שם הפרויקט לאישור" value={t} onChange={(e) => setT(e.target.value)} />
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button className="btn btn-secondary" onClick={() => ui.close()}>ביטול</button>
-        <button className="btn btn-primary" disabled={t.trim() !== p.title} onClick={() => { store.deleteProject(); ui.close(); ui.go('dashboard'); ui.toast('הפרויקט נמחק'); }}>
+        <button className="btn btn-primary" disabled={t.trim() !== p.title} onClick={async () => {
+          try {
+            if (isServer() && p.serverRev != null) await deleteRemoteProject(p.id);
+          } catch (e) {
+            return ui.toast((e as Error).message);
+          }
+          store.deleteProject(); ui.close(); ui.go('dashboard'); ui.toast('הפרויקט נמחק');
+        }}>
           <i className="ph ph-trash" />מחק לצמיתות
         </button>
       </div>

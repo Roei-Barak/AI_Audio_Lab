@@ -7,7 +7,7 @@ const fs = require('fs');
   const pg = await ctx.newPage();
   const errs = [];
   pg.on('pageerror', (e) => errs.push(e.message));
-  pg.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+  pg.on('console', (m) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errs.push(m.text()));
   const log = (k, v) => console.log((v ? 'PASS ' : 'FAIL ') + k);
   await pg.goto(process.env.LYRA_URL || 'http://localhost:4173/');
   log('A2 simple mode default', await pg.getByRole('button', { name: 'מצב פשוט' }).getAttribute('aria-pressed') === 'true');

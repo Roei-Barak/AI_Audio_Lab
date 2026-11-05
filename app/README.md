@@ -20,7 +20,10 @@ node e2e/screens.cjs /tmp   # every route + auth, invite, find/replace, versions
 - **AI re-run as a suggestion**: changes are accepted or rejected per line, and manually fixed words are locked.
 - **Real SRT/TXT/JSON downloads** built from the edited data.
 
-## Simulated (there is no backend)
+## Processing server
+`../server` is the real backend: import (yt-dlp or upload), separation, Whisper transcription with word timing, alignment and ffmpeg MP4 render, with one GPU job at a time, crash checkpoints, cancel and resume, and save conflicts detected by server revision. When `/api/health` answers, the app switches to server mode automatically: the "שרת Lyra" badge appears, saves go to the server, and MP4, Vocals and Instrumental downloads are real files. Without a server, everything below stays simulated (demo mode). See `../server/README.md`.
+
+## Simulated in demo mode (no server)
 YouTube import, stem separation, transcription, alignment, MP4 render and Vocals/Instrumental downloads; the server, the connection state, and the other user in a conflict. The UI labels each of these. Uploaded local media plays for real, but with its original audio.
 
 - **Advanced screens on the same data**: dashboard, library, project details (files, version checkpoints with restore, activity, re-run as suggestion), Audio Studio mixer (saved in the project), video editor (tracks and a global subtitle offset), export (MP4 simulated; SRT/LRC/TXT/JSON real), outputs library, settings (server, general defaults used by Simple Mode, models, storage, local API token), team and permissions.

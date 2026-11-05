@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { listProjects, openProject } from '../../store/server';
 import { Seg } from '../../components/controls';
-import { exportFile, exportMp4 } from '../../lib/actions';
+import { exportFile, exportMp4, serverProject } from '../../lib/actions';
+import { renderFresh } from '../../store/server';
 import { fmtShort, hhmm, toLrc, toSrt } from '../../lib/format';
 import { jobPct, store, useStore } from '../../store/store';
 import type { Res } from '../../store/types';
@@ -77,21 +79,34 @@ export function Dashboard() {
 }
 
 export function Library() {
-  const { project: p } = useStore();
+  const { project: p, backend } = useStore();
   const [q, setQ] = useState('');
-  const rows = [
-    ...(p ? [{ t: p.title, a: p.artist, d: fmtShort(p.source.duration), s: 'פתוח · ' + p.lines.length + ' שורות', real: true }] : []),
-    ...DEMO_LIBRARY.map((x) => ({ ...x, real: false })),
-  ].filter((r) => !q.trim() || (r.t + ' ' + r.a).toLowerCase().includes(q.trim().toLowerCase()));
+  const [remote, setRemote] = useState<{ id: string; title: string; artist: string; lines: number }[] | null>(null);
+  useEffect(() => {
+    if (backend.mode !== 'server') return;
+    listProjects().then(setRemote).catch(() => setRemote(null));
+  }, [backend.mode, p?.id]);
+  const rows: { id?: string; t: string; a: string; d: string; s: string; real: boolean }[] = remote
+    ? remote.map((r) => ({ id: r.id, t: r.title, a: r.artist, d: '', s: (r.id === p?.id ? 'פתוח · ' : '') + r.lines + ' שורות', real: true }))
+    : [
+        ...(p ? [{ t: p.title, a: p.artist, d: fmtShort(p.source.duration), s: 'פתוח · ' + p.lines.length + ' שורות', real: true }] : []),
+        ...DEMO_LIBRARY.map((x) => ({ ...x, real: false })),
+      ];
+  const filtered = rows.filter((r) => !q.trim() || (r.t + ' ' + r.a).toLowerCase().includes(q.trim().toLowerCase()));
   return (
-    <Page title="ספריית שירים" sub="פרויקטים פרטיים" actions={<button className="btn btn-primary" onClick={() => { ui.setStep('input'); ui.go('simple'); }}><i className="ph ph-plus" />שיר חדש</button>}>
+    <Page title="ספריית שירים" sub={backend.mode === 'server' ? 'פרויקטים פרטיים · בשרת' : 'פרויקטים פרטיים · מצב הדגמה'} actions={<button className="btn btn-primary" onClick={() => { ui.setStep('input'); ui.go('simple'); }}><i className="ph ph-plus" />שיר חדש</button>}>
       <input className="input" placeholder="חיפוש לפי שם שיר או אמן" aria-label="חיפוש" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 420 }} />
-      {rows.length === 0 ? (
-        <StateView kind="emptyLibrary" inline onClear={() => setQ('')} />
+      {filtered.length === 0 ? (
+        <StateView kind={q ? 'emptyLibrary' : 'emptyDashboard'} inline onClear={() => setQ('')} />
       ) : (
         <div className="panel" style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {rows.map((r) => (
-            <button key={r.t} className="row-btn" onClick={() => (r.real ? ui.go('project') : ui.toast('פרויקט לדוגמה בלבד · בגרסה הזו יש פרויקט אמיתי אחד'))}>
+          {filtered.map((r) => (
+            <button key={r.id || r.t} className="row-btn" onClick={async () => {
+              if (r.id && r.id !== p?.id) {
+                try { await openProject(r.id); } catch (e) { return ui.toast((e as Error).message); }
+              }
+              if (r.real) ui.go('project'); else ui.toast('פרויקט לדוגמה בלבד · במצב הדגמה יש פרויקט אמיתי אחד');
+            }}>
               <i className="ph ph-music-note" style={{ fontSize: 18, color: 'var(--color-accent-300)' }} />
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span dir="auto">{r.t}</span>
@@ -155,7 +170,7 @@ export function ExportScreen() {
               <span className="muted" style={{ fontSize: 13 }}>רזולוציה</span>
               <Seg value={p.export.res} onChange={(v: Res) => store.edit('רזולוציית ייצוא', (P) => void (P.export.res = v))} options={[['720p', '720p'], ['1080p', '1080p']]} />
             </div>
-            <button className="btn btn-primary" onClick={exportMp4} style={{ justifyContent: 'center' }}><i className="ph ph-film-strip" />ייצא MP4 (דורש שרת · מדומה)</button>
+            <button className="btn btn-primary" onClick={() => void exportMp4()} style={{ justifyContent: 'center' }}><i className="ph ph-film-strip" />{serverProject() ? (renderFresh(p) ? 'הורד MP4' : 'רנדר MP4 בשרת') : 'ייצא MP4 (דורש שרת · מדומה)'}</button>
           </Card>
           <Card>
             <span className="kicker">קבצים אמיתיים מהנתונים הערוכים</span>

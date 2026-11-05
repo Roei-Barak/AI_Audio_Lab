@@ -25,12 +25,13 @@ const FLOW: [Route, string, string][] = [
   ['export', 'ייצוא', 'ph ph-export'],
 ];
 
-function savePill(save: SaveInfo): [string, string, string, string] {
+function savePill(save: SaveInfo, remote: boolean): [string, string, string, string] {
+  const where = remote ? 'בשרת' : 'בדפדפן';
   switch (save.state) {
     case 'saving':
-      return ['ph ph-spinner-gap spin', 'שומר בדפדפן…', 'transparent', 'var(--color-neutral-300)'];
+      return ['ph ph-spinner-gap spin', 'שומר ' + where + '…', 'transparent', 'var(--color-neutral-300)'];
     case 'saved':
-      return ['ph ph-check-circle', 'נשמר בדפדפן · ' + (save.at || ''), 'transparent', 'var(--color-neutral-300)'];
+      return ['ph ph-check-circle', 'נשמר ' + where + ' · ' + (save.at || ''), 'transparent', 'var(--color-neutral-300)'];
     case 'local':
       return ['ph ph-hard-drives', 'נשמר בדפדפן · ' + save.pending + ' ממתינים לסנכרון', 'var(--color-neutral-800)', 'var(--color-accent-200)'];
     case 'failed':
@@ -84,12 +85,13 @@ export function App() {
     const st = job?.status;
     if (st !== lastStatus.current) {
       if (st === 'failed') ui.toast('העיבוד קרס בשלב ' + ['הייבוא', 'ההפרדה', 'התמלול', 'הסנכרון', 'הרינדור'][job!.stage] + ' · דורש התאוששות');
-      if (st === 'done' && lastStatus.current === 'running') ui.toast('העיבוד הושלם (סימולציה)');
+      if (st === 'done' && lastStatus.current === 'running') ui.toast(job?.kind === 'render' ? 'סרטון הקריוקי מוכן להורדה' : job?.serverId ? 'העיבוד בשרת הושלם' : 'העיבוד הושלם (סימולציה)');
       lastStatus.current = st;
     }
   }, [job?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [sIcon, sLabel, sBg, sFg] = savePill(save);
+  const remoteProject = S.backend.mode === 'server' && project?.serverRev != null;
+  const [sIcon, sLabel, sBg, sFg] = savePill(save, remoteProject);
   const fi = FLOW.findIndex(([k]) => k === route || (k === 'subs-word' && (route === 'subs' || route === 'subs-lyrics')));
   const jobLbl = !job ? '' : job.status === 'running' ? ' · ' + jobPct(job) + '%' : job.status === 'failed' ? ' · קרס' : job.status === 'cancelled' ? ' · בוטל' : ' · הושלם';
   let nextOk = fi >= 0 && fi < FLOW.length - 1;
@@ -127,7 +129,7 @@ export function App() {
         </div>
         <button
           onClick={() => (save.state === 'failed' ? store.retrySave() : save.state === 'conflict' ? ui.open('conflict') : store.saveNow())}
-          title="נשמר ב־localStorage של הדפדפן. אין שרת מחובר באב־טיפוס. ⌘S לשמירה ידנית."
+          title={remoteProject ? 'נשמר בשרת Lyra עם בדיקת התנגשויות. ⌘S לשמירה ידנית ולנקודת שמירה.' : 'נשמר ב־localStorage של הדפדפן. אין שרת מחובר. ⌘S לשמירה ידנית.'}
           aria-live="polite"
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 11px', border: 0, borderRadius: 999, font: 'inherit', fontSize: 12.5, cursor: 'pointer', background: sBg, color: sFg }}
         >
@@ -135,6 +137,10 @@ export function App() {
           {sLabel}
         </button>
         <div style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className={S.backend.mode === 'server' && S.backend.reachable ? 'tag tag-accent' : 'tag tag-neutral'} title={S.backend.gpu?.name ? S.backend.gpu.name + ' · ' + S.backend.gpu.vramGB + 'GB VRAM' : undefined}>
+            <i className={S.backend.mode === 'server' ? (S.backend.reachable ? 'ph ph-plugs-connected' : 'ph ph-plugs') : 'ph ph-flask'} />{' '}
+            {S.backend.mode === 'server' ? (S.backend.reachable ? 'שרת Lyra' + (S.backend.engine === 'mock' ? ' · מנוע בדיקה' : '') : 'שרת Lyra לא זמין') : 'מצב הדגמה'}
+          </span>
           <div className="pill-group" role="group" aria-label="חיבור" style={{ borderRadius: 'var(--radius-md)', padding: 2 }}>
             {([['local', 'המחשב הזה', 'ph ph-desktop-tower'], ['remote', 'שרת מרוחק', 'ph ph-globe-simple']] as const).map(([k, l, i]) => (
               <button key={k} className="pill sm" aria-pressed={sim.conn === k} style={{ borderRadius: 6 }} onClick={() => { store.setSim('conn', k); ui.toast(k === 'local' ? 'מחובר למחשב הזה' : 'מחובר לשרת מרוחק lyra.home'); }}>
@@ -174,7 +180,7 @@ export function App() {
         )}
         <div style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className="dim" style={{ fontSize: 11.5 }}>הדמיה</span>
-          {sims.map(([l, i, on, go, title]) => (
+          {(S.backend.mode === 'server' ? sims.filter(([l]) => l === 'קריסה בתמלול' && S.backend.engine === 'mock') : sims).map(([l, i, on, go, title]) => (
             <button key={l} onClick={go} aria-pressed={on} className={on ? 'tag tag-outline' : 'tag tag-neutral'} title={title} style={{ border: 0, cursor: 'pointer', padding: '5px 9px', fontSize: 12 }}>
               <i className={i} /> {l}
             </button>
@@ -183,6 +189,12 @@ export function App() {
       </div>
       <main className="stage">
         {isSimple ? (session.userId ? <SimpleMode /> : <Login />) : <Advanced route={route} />}
+        {S.backend.mode === 'server' && !S.backend.reachable && (
+          <div className="banner-offline" role="status">
+            <i className="ph ph-plugs" style={{ color: 'var(--color-accent-200)' }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>שרת Lyra לא זמין · עריכות נשמרות בדפדפן ויסונכרנו כשהחיבור יחזור</span>
+          </div>
+        )}
         {sim.offline && (
           <div className="banner-offline" role="status">
             <i className="ph ph-plugs" style={{ color: 'var(--color-accent-200)' }} />

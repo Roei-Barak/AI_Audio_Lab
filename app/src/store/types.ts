@@ -75,6 +75,14 @@ export interface Project {
   export: { format: 'mp4'; res: Res };
   history: HistoryEntry[];
   rev: number;
+  /** server-side revision used for conflict detection (absent for a browser-only demo project) */
+  serverRev?: number;
+  /** serverRev of the last MP4 render */
+  renderedRev?: number;
+  /** AI re-run output kept as a suggestion when manual fixes exist */
+  suggestion?: { at: number; lines: Line[] } | null;
+  processed?: boolean;
+  rerun?: boolean;
 }
 
 export type JobStatus = 'running' | 'failed' | 'cancelled' | 'done';
@@ -93,6 +101,12 @@ export interface Job {
   endedAt?: number;
   /** last time the job state was written; used to catch up after the UI was closed */
   updatedAt?: number;
+  /** set when the job runs on the Lyra server */
+  serverId?: string;
+  kind?: 'process' | 'render';
+  error?: string | null;
+  crash?: boolean;
+  log?: string[];
 }
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'local' | 'failed' | 'conflict';
@@ -116,6 +130,18 @@ export interface Media {
   url: string;
   type: string;
   name: string;
+  /** separate audio track (server instrumental) played in sync with a muted video */
+  audioUrl?: string;
+  remote?: boolean;
+}
+
+export interface Backend {
+  mode: 'demo' | 'server';
+  engine?: 'ai' | 'mock';
+  gpu?: { name: string | null; vramGB: number | null; device: string };
+  host?: string;
+  /** last health check reached the server */
+  reachable: boolean;
 }
 
 export type Mode = 'simple' | 'advanced';
@@ -132,4 +158,7 @@ export interface StoreState {
   restored: boolean;
   /** the job kept running while the UI was closed */
   bgCatchUp: { from: number; to: number } | null;
+  backend: Backend;
+  /** server copy received on a 409 conflict */
+  conflictTheirs: Project | null;
 }

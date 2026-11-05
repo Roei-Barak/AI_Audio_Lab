@@ -12,7 +12,7 @@ const ROUTES = ['dashboard', 'library', 'queue', 'outputs', 'team', 'options', '
   const errs = [];
   let fails = 0;
   pg.on('pageerror', (e) => errs.push(e.message));
-  pg.on('console', (m) => m.type() === 'error' && !/fonts\.g/.test(m.text()) && errs.push(m.text()));
+  pg.on('console', (m) => m.type() === 'error' && !/fonts\.g|Failed to load resource/.test(m.text()) && errs.push(m.text()));
   const log = (k, v) => { if (!v) fails++; console.log((v ? 'PASS ' : 'FAIL ') + k); };
   await pg.goto(URL);
   await pg.evaluate(() => localStorage.clear());

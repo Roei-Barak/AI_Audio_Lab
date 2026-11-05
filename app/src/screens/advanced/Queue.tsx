@@ -2,13 +2,27 @@ import { STAGES, jobPct, store, useStore } from '../../store/store';
 import { ui } from '../../store/ui';
 import { Empty } from './ProcessingOptions';
 import { useWS, ws } from '../../store/workspace';
+import { useEffect, useState } from 'react';
+import { api, isServer, listJobs } from '../../store/server';
+import type { Job } from '../../store/types';
 
 const NAMES = (stems: number) => ['הכנת קובץ', 'הפרדה ל־' + stems + ' ערוצים', 'תמלול', 'יישור מילים', 'טיוטת כתוביות'];
 const RES = ['CPU', 'GPU', 'GPU', 'GPU', 'CPU'];
 
 export function Queue() {
   const { job, sim, project } = useStore();
-  const { waiting } = useWS();
+  const { waiting: demoWaiting } = useWS();
+  const [srvJobs, setSrvJobs] = useState<Job[] | null>(null);
+  useEffect(() => {
+    if (!isServer()) return;
+    const f = () => listJobs().then(setSrvJobs).catch(() => {});
+    f();
+    const t = setInterval(f, 2000);
+    return () => clearInterval(t);
+  }, []);
+  const waiting = srvJobs
+    ? srvJobs.filter((j) => j.status === 'running' && j.id !== job?.serverId).map((j) => ({ id: j.id, name: j.name, pipe: (j.kind === 'render' ? 'רינדור MP4' : 'עיבוד מלא') + ' · ' + j.profile + ' · ' + j.stems + ' ערוצים' }))
+    : demoWaiting;
   if (!job)
     return (
       <Empty>
@@ -27,7 +41,7 @@ export function Queue() {
 
   const V = {
     running: { tag: 'רץ · ' + curName, tagCls: 'tag tag-accent', icon: 'ph ph-waveform', sub: where + ' · ' + RES[stage] + ' · פרופיל ' + job.profile + (job.attempt > 1 ? ' · ניסיון ' + job.attempt : ''), eta: sim.offline ? 'מצב לא ידוע' : 'נותרו כ־' + Math.max(1, Math.round((100 - overall) / 18)) + ' דק׳', banner: sim.offline ? ['אין חיבור לשרת', 'מצב העבודה לא ידוע. הסטטוס יתעדכן כשהחיבור יחזור.'] : null },
-    failed: { tag: 'קרס · דורש התאוששות', tagCls: 'tag tag-accent', icon: 'ph ph-lightning-slash', sub: where + ' · נעצר בשלב ' + curName, eta: 'מושהה', banner: ['תהליך ה־GPU הופסק באופן לא צפוי', 'חריגה מזיכרון GPU בשלב ' + curName + '. מה שהושלם נשמר (' + names.slice(0, job.stage).join(', ') + '), ולכן אין צורך להתחיל מחדש. זו קריסה, לא כשל בתוכן הקובץ.'] },
+    failed: job.serverId && !job.crash ? { tag: 'נכשל', tagCls: 'tag tag-neutral', icon: 'ph ph-warning-circle', sub: where + ' · בשלב ' + curName, eta: '—', banner: ['העיבוד נכשל בגלל המקור', job.error || ''] } : { tag: 'קרס · דורש התאוששות', tagCls: 'tag tag-accent', icon: 'ph ph-lightning-slash', sub: where + ' · נעצר בשלב ' + curName, eta: 'מושהה', banner: ['תהליך ה־GPU הופסק באופן לא צפוי', (job.serverId ? (job.error || 'שגיאה') + ' · שלב ' + curName : 'חריגה מזיכרון GPU בשלב ' + curName) + '. מה שהושלם נשמר (' + names.slice(0, job.stage).join(', ') + '), ולכן אין צורך להתחיל מחדש. זו קריסה, לא כשל בתוכן הקובץ.'] },
     cancelled: { tag: 'בוטל', tagCls: 'tag tag-neutral', icon: 'ph ph-stop-circle', sub: 'בוטל בשלב ' + curName, eta: '—', banner: ['העבודה בוטלה', 'שלבים שהושלמו נשמרו. הפעלה מחדש תמשיך מ' + curName + '.'] },
     done: { tag: 'הושלם', tagCls: 'tag tag-outline', icon: 'ph ph-check-circle', sub: where + ' · פרופיל ' + job.profile + ' · ' + job.stems + ' ערוצים', eta: 'הסתיים', banner: ['העיבוד הושלם', 'נוצרו תמלול, תזמון ברמת מילה וטיוטת כתוביות. מילים בביטחון מודל נמוך מסומנות לבדיקה (הערכת המודל, לא דיוק מאומת).'] },
   }[st];
@@ -46,7 +60,7 @@ export function Queue() {
           <header style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
             <h2 style={{ fontSize: 28, margin: 0 }}>תור עיבודי AI</h2>
             <span className="dim" style={{ fontSize: 14, paddingBottom: 4 }}>{st === 'running' ? 'משימה אחת רצה' : 'אין משימת GPU פעילה'}</span>
-            <span className="tag tag-outline" style={{ marginInlineStart: 'auto' }}>סימולציה · אין שרת עיבוד מחובר</span>
+            <span className="tag tag-outline" style={{ marginInlineStart: 'auto' }}>{job.serverId ? 'שרת Lyra' : 'סימולציה · אין שרת עיבוד מחובר'}</span>
           </header>
           <section style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 18, borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', boxShadow: st === 'failed' ? 'inset 0 0 0 1px var(--color-accent-700)' : 'var(--shadow-sm)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -117,7 +131,7 @@ export function Queue() {
               </span>
             </div>
             <div dir="ltr" style={{ fontFamily: "ui-monospace,'SF Mono',Menlo,monospace", fontSize: 11.5, lineHeight: 1.7, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--color-bg)', textAlign: 'left', overflowX: 'auto' }}>
-              {logs.map(([t, h], i) => (
+              {(job.log && job.log.length ? job.log.map((t, i) => [t, i === job.log!.length - 1] as [string, boolean]) : logs).map(([t, h], i) => (
                 <div key={i} style={{ color: h ? 'var(--color-accent-300)' : 'var(--color-neutral-400)' }}>{t}</div>
               ))}
             </div>
@@ -136,12 +150,12 @@ export function Queue() {
                   <div className="dim" style={{ fontSize: 12 }}>{w.pipe}</div>
                 </div>
                 <span className="tag tag-neutral">{gpuBusy ? 'ממתין ל־GPU' : i === 0 ? 'מתחיל בקרוב' : 'ממתין'}</span>
-                <button className="btn btn-ghost btn-icon" aria-label={'הקדם את ' + w.name} disabled={i === 0} onClick={() => ws.moveWaiting(w.id, -1)}><i className="ph ph-arrow-up" /></button>
-                <button className="btn btn-ghost btn-icon" aria-label={'דחה את ' + w.name} disabled={i === waiting.length - 1} onClick={() => ws.moveWaiting(w.id, 1)}><i className="ph ph-arrow-down" /></button>
-                <button className="btn btn-ghost btn-icon" aria-label={'הסר את ' + w.name} onClick={() => { ws.removeWaiting(w.id); ui.toast('הוסר מהתור'); }}><i className="ph ph-x" /></button>
+                <button className="btn btn-ghost btn-icon" aria-label={'הקדם את ' + w.name} disabled={i === 0} onClick={() => (srvJobs ? api('/api/jobs/' + w.id + '/move', { method: 'POST', body: JSON.stringify({ delta: -1 }) }) : ws.moveWaiting(w.id, -1))}><i className="ph ph-arrow-up" /></button>
+                <button className="btn btn-ghost btn-icon" aria-label={'דחה את ' + w.name} disabled={i === waiting.length - 1} onClick={() => (srvJobs ? api('/api/jobs/' + w.id + '/move', { method: 'POST', body: JSON.stringify({ delta: 1 }) }) : ws.moveWaiting(w.id, 1))}><i className="ph ph-arrow-down" /></button>
+                <button className="btn btn-ghost btn-icon" aria-label={'הסר את ' + w.name} onClick={async () => { if (srvJobs) await api('/api/jobs/' + w.id + '/cancel', { method: 'POST' }); else ws.removeWaiting(w.id); ui.toast('הוסר מהתור'); }}><i className="ph ph-x" /></button>
               </div>
             ))}
-            <span className="dim" style={{ fontSize: 11.5 }}>משימות לדוגמה של שירים אחרים · הסדר נשמר.</span>
+            <span className="dim" style={{ fontSize: 11.5 }}>{srvJobs ? 'העבודות בתור של השרת.' : 'משימות לדוגמה של שירים אחרים · הסדר נשמר.'}</span>
           </section>
         </div>
         <aside style={{ flex: '1 1 280px', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 20, paddingTop: 6 }}>

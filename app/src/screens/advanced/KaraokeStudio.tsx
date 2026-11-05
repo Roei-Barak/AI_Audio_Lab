@@ -1,7 +1,8 @@
 import { KaraokePreview } from '../../components/KaraokePreview';
 import { ColorSwatches, Seg, SizeSlider } from '../../components/controls';
 import { lineSpan, lineText } from '../../lib/format';
-import { exportFile, exportMp4 } from '../../lib/actions';
+import { exportFile, exportMp4, serverProject } from '../../lib/actions';
+import { renderFresh } from '../../store/server';
 import { previewStyle, setStyle } from '../../lib/styleEdit';
 import { usePlayback } from '../../store/playback';
 import { store, useStore } from '../../store/store';
@@ -91,9 +92,9 @@ export function KaraokeStudio() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, borderRadius: 'var(--radius-md)', background: 'var(--color-surface)' }}>
             <span className="kicker">ייצוא</span>
-            <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={exportMp4}>
+            <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={() => void exportMp4()}>
               <i className="ph ph-film-strip" />
-              ייצוא MP4 (דורש שרת · מדומה)
+              {serverProject() ? (renderFresh(p) ? 'הורד MP4' : 'רנדר MP4 בשרת') : 'ייצוא MP4 (דורש שרת · מדומה)'}
             </button>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {(['srt', 'lrc', 'txt', 'json'] as const).map((k) => (

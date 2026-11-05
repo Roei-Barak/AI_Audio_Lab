@@ -10,6 +10,7 @@ export function KaraokePreview({ controls = true }: { controls?: boolean }) {
   const { t, playing } = usePlayback();
   const boxRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [box, setBox] = useState({ w: 800, h: 450 });
 
   useLayoutEffect(() => {
@@ -22,7 +23,11 @@ export function KaraokePreview({ controls = true }: { controls?: boolean }) {
 
   useEffect(() => {
     playback.registerVideo(videoRef.current);
-    return () => playback.registerVideo(null);
+    playback.registerAudio(audioRef.current);
+    return () => {
+      playback.registerVideo(null);
+      playback.registerAudio(null);
+    };
   }, [media]);
 
   if (!p) return null;
@@ -56,7 +61,7 @@ export function KaraokePreview({ controls = true }: { controls?: boolean }) {
     ]
       .filter(Boolean)
       .join(', ') || 'none';
-  const isVid = !!media && /^video/.test(media.type);
+  const isVid = !!media && !!media.url && /^video/.test(media.type);
   const showVideo = isVid && st.background === 'video';
   const bg = st.background === 'blur' ? 'linear-gradient(160deg, var(--color-accent-900), var(--color-neutral-900))' : 'var(--color-neutral-900)';
   const pos = st.position;
@@ -70,10 +75,13 @@ export function KaraokePreview({ controls = true }: { controls?: boolean }) {
           style={{ position: 'relative', width: Math.round(fw), height: Math.round(fh), borderRadius: 'var(--radius-lg)', overflow: 'hidden', background: bg, boxShadow: 'var(--shadow-md)' }}
           aria-label="תצוגת קריוקי"
         >
-          {media && (
+          {media?.audioUrl && <audio ref={audioRef} src={media.audioUrl} preload="auto" />}
+          {media && media.url && (
             <video
               ref={videoRef}
               src={media.url}
+              muted={!!media.audioUrl}
+              preload="auto"
               playsInline
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: showVideo ? 'block' : 'none' }}
             />
@@ -90,12 +98,12 @@ export function KaraokePreview({ controls = true }: { controls?: boolean }) {
           )}
           <div style={{ position: 'absolute', top: 10, right: 10, left: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <span className="tag tag-neutral" style={tagStyle}>
-              <i className="ph ph-speaker-high" /> {media ? 'ניגון מקומי של הקובץ שהועלה · ללא הפרדה בדפדפן' : 'Instrumental · השירה המקורית מושתקת'}
+              <i className="ph ph-speaker-high" /> {media?.audioUrl ? 'Instrumental מהשרת · השירה המקורית מושתקת' : media ? 'ניגון מקומי של הקובץ שהועלה · ללא הפרדה בדפדפן' : 'Instrumental · השירה המקורית מושתקת (מדומה)'}
             </span>
             <span className="tag tag-neutral" style={tagStyle}>
               <i className="ph ph-monitor-play" />{' '}
               {st.background === 'video'
-                ? (media ? 'וידאו מקומי · ' : 'וידאו מקור · תצוגה מדומה · ') + st.aspect
+                ? (media?.remote ? 'וידאו מקור · ' : media ? 'וידאו מקומי · ' : 'וידאו מקור · תצוגה מדומה · ') + st.aspect
                 : 'רקע ' + (st.background === 'blur' ? 'מעבר צבע' : 'אחיד') + ' · ' + st.aspect}
             </span>
             <span className="tag tag-neutral" style={tagStyle}>
@@ -167,7 +175,7 @@ export function KaraokePreview({ controls = true }: { controls?: boolean }) {
             {fmt(dur)}
           </span>
           <span className="tag tag-outline hide-narrow" style={{ fontSize: 11 }}>
-            {media ? 'ניגון מקומי אמיתי' : 'סימולציית ניגון'}
+            {media?.remote ? 'ניגון מהשרת' : media ? 'ניגון מקומי אמיתי' : 'סימולציית ניגון'}
           </span>
         </div>
       )}

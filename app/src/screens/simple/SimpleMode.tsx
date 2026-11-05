@@ -9,7 +9,8 @@ import { STAGES, jobPct, store, useStore } from '../../store/store';
 import type { Lang, Profile, Res, Source } from '../../store/types';
 import { ui, useUI, type SimpleStep } from '../../store/ui';
 import { ws } from '../../store/workspace';
-import { exportFile, exportMp4 } from '../../lib/actions';
+import { downloadStem, exportFile, exportMp4, serverProject } from '../../lib/actions';
+import { isServer, renderFresh, startProcessing } from '../../store/server';
 
 const YT_RE = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[\w-]{4,}/i;
 
@@ -118,6 +119,8 @@ function InputStep({ compact }: { compact: boolean }) {
   const [url, setUrlRaw] = useState('');
   const [err, setErr] = useState({ text: '', upload: false });
   const [file, setFile] = useState<FileInfo | null>(null);
+  const fileRef = useRef<File | null>(null);
+  const [busy, setBusy] = useState(false);
   const [more, setMore] = useState(false);
   const [cfg, setCfg] = useState<{ stems: 2 | 4; profile: Profile; lang: Lang; res: Res }>(() => { const d = ws.get().settings; return { stems: d.defaultStems, profile: d.defaultProfile, lang: d.language, res: '1080p' }; });
 
@@ -131,6 +134,7 @@ function InputStep({ compact }: { compact: boolean }) {
     if (!f) return;
     if (f.size > 20 * 1024 ** 3) return setErr({ text: 'הקובץ גדול מ־20GB.', upload: false });
     store.setMedia(f);
+    fileRef.current = f;
     const info: FileInfo = { name: f.name, size: f.size, type: f.type, duration: null };
     setFile(info);
     setErr({ text: '', upload: false });
@@ -144,7 +148,8 @@ function InputStep({ compact }: { compact: boolean }) {
     m.onerror = () => setFile({ ...info, unplayable: true });
   };
 
-  const create = () => {
+  const create = async () => {
+    if (busy) return;
     let source: Source;
     if (src === 'yt') {
       const c = checkUrl(url);
@@ -154,7 +159,21 @@ function InputStep({ compact }: { compact: boolean }) {
       if (!file) return setErr({ text: 'בחר קובץ וידאו או אודיו.', upload: false });
       source = { kind: 'file', name: file.name, size: file.size, duration: file.duration || 66, hasVideo: /^video/.test(file.type) };
     }
-    store.newProject(source, { profile: cfg.profile, stems: cfg.stems, language: cfg.lang, res: cfg.res });
+    const c2 = { profile: cfg.profile, stems: cfg.stems, language: cfg.lang, res: cfg.res };
+    if (isServer()) {
+      setBusy(true);
+      try {
+        await startProcessing(source, c2, src === 'file' ? fileRef.current ?? undefined : undefined, store.get().sim.crash);
+        ui.setStep('progress');
+      } catch (e) {
+        const msg = (e as Error).message || 'השרת לא זמין';
+        setErr({ text: msg, upload: src === 'yt' });
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    store.newProject(source, c2);
     store.startJob({ name: source.name, profile: cfg.profile, stems: cfg.stems });
     ui.setStep('progress');
   };
@@ -263,19 +282,19 @@ function InputStep({ compact }: { compact: boolean }) {
             </div>
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span dir="auto" style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {src === 'yt' ? DEMO_YT_SOURCE.name : file!.name}
+                {src === 'yt' ? (isServer() ? url.trim() : DEMO_YT_SOURCE.name) : file!.name}
               </span>
               <span className="muted" style={{ fontSize: 12.5 }}>
                 {src === 'yt'
-                  ? 'נועה ברק · 1:06 · וידאו + אודיו'
+                  ? isServer() ? 'פרטי השיר ייקראו מ־YouTube' : 'נועה ברק · 1:06 · וידאו + אודיו'
                   : (file!.size / 1048576).toFixed(1) + 'MB · ' + (file!.duration ? fmtShort(file!.duration) : file!.unplayable ? 'הדפדפן לא יכול לנגן את הקובץ' : 'קורא משך…')}
               </span>
               <span className="dim" style={{ fontSize: 11.5 }}>
                 {src === 'yt'
-                  ? 'פרטי המקור מדומים. באב־טיפוס אין גישה ל־YouTube.'
+                  ? isServer() ? 'השרת יוריד את המקור ויעבד אותו.' : 'פרטי המקור מדומים. במצב הדגמה אין גישה ל־YouTube.'
                   : file!.unplayable
                     ? 'הקובץ יעובד בשרת. בתצוגה המקדימה ינוגן בסימולציה.'
-                    : 'הקובץ נשאר בדפדפן ומנוגן מקומית בתצוגה המקדימה. הוא לא נשמר.'}
+                    : isServer() ? 'הקובץ יועלה לשרת העיבוד בלחיצה על "צור קריוקי".' : 'הקובץ נשאר בדפדפן ומנוגן מקומית בתצוגה המקדימה. הוא לא נשמר.'}
               </span>
             </div>
             <button
@@ -293,9 +312,9 @@ function InputStep({ compact }: { compact: boolean }) {
             </button>
           </div>
         )}
-        <button className="btn btn-primary" onClick={create} style={{ height: 56, fontSize: 17, justifyContent: 'center' }}>
-          <i className="ph ph-microphone-stage" style={{ fontSize: 20 }} />
-          צור קריוקי
+        <button className="btn btn-primary" onClick={create} disabled={busy} style={{ height: 56, fontSize: 17, justifyContent: 'center' }}>
+          <i className={busy ? 'ph ph-spinner-gap spin' : 'ph ph-microphone-stage'} style={{ fontSize: 20 }} />
+          {busy ? (src === 'file' ? 'מעלה לשרת…' : 'בודק את הקישור…') : 'צור קריוקי'}
         </button>
         <span className="dim" style={{ fontSize: 12 }}>
           משתמשים רק במקורות שמותר לך להשתמש בהם. Lyra לא עוקפת DRM או הגבלות גישה.
@@ -388,7 +407,7 @@ function ProgressStep({ compact }: { compact: boolean }) {
               {job.name} · {job.stems} ערוצים · {job.profile}
             </span>
           </div>
-          <span className="tag tag-outline" style={{ marginInlineStart: 'auto' }}>סימולציה · אין שרת עיבוד מחובר</span>
+          <span className="tag tag-outline" style={{ marginInlineStart: 'auto' }}>{job.serverId ? 'שרת Lyra · ' + (store.get().backend.engine === 'mock' ? 'מנוע בדיקה' : 'מודלי AI') : 'סימולציה · אין שרת עיבוד מחובר'}</span>
         </div>
         <div role="progressbar" aria-valuenow={jobPct(job)} aria-valuemin={0} aria-valuemax={100} style={{ height: 6, borderRadius: 999, background: 'var(--color-neutral-800)', overflow: 'hidden' }}>
           <div style={{ height: '100%', width: jobPct(job) + '%', background: 'var(--color-accent)', transition: 'width 200ms' }} />
@@ -437,7 +456,7 @@ function ProgressStep({ compact }: { compact: boolean }) {
           <div role="alert" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-accent-800) 45%, var(--color-bg))' }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14.5 }}>
               <i className="ph ph-lightning-slash" style={{ fontSize: 20, color: 'var(--color-accent-200)' }} />
-              העיבוד קרס בשלב {STAGES[job.stage]}. השלבים הקודמים הושלמו ונשמרו.
+              {job.serverId && !job.crash ? job.error : 'העיבוד קרס בשלב ' + STAGES[job.stage] + '. השלבים הקודמים הושלמו ונשמרו.'}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" onClick={() => store.retryJob(false)}><i className="ph ph-arrow-clockwise" />נסה שוב מהשלב</button>
@@ -445,6 +464,14 @@ function ProgressStep({ compact }: { compact: boolean }) {
               <button className="btn btn-ghost" onClick={restart}>בטל והתחל שיר אחר</button>
             </div>
           </div>
+        )}
+        {job.log && job.log.length > 0 && (
+          <details>
+            <summary className="dim" style={{ cursor: 'pointer', fontSize: 12.5 }}>יומן השרת</summary>
+            <div dir="ltr" style={{ fontFamily: "ui-monospace,'SF Mono',Menlo,monospace", fontSize: 11.5, lineHeight: 1.7, padding: '10px 12px', marginTop: 6, borderRadius: 'var(--radius-md)', background: 'var(--color-bg)', color: 'var(--color-neutral-400)', textAlign: 'left', maxHeight: 200, overflow: 'auto' }}>
+              {job.log.map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+          </details>
         )}
         {job.status === 'cancelled' && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-surface)' }}>
@@ -458,7 +485,7 @@ function ProgressStep({ compact }: { compact: boolean }) {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button className="btn btn-secondary" onClick={() => store.cancelJob()}><i className="ph ph-stop" />בטל</button>
             <a onClick={() => ui.go('queue')} style={{ fontSize: 13 }}>פתח בתור העיבוד</a>
-            <span className="dim" style={{ fontSize: 12.5 }}>אפשר לעזוב את המסך. העבודה ממשיכה בתור כל עוד השרת פעיל.</span>
+            <span className="dim" style={{ fontSize: 12.5 }}>{job.serverId ? 'אפשר לסגור את הדפדפן. העבודה ממשיכה בשרת, וביטול נכנס לתוקף בסוף השלב הנוכחי.' : 'אפשר לעזוב את המסך. העבודה ממשיכה בתור כל עוד השרת פעיל.'}</span>
           </div>
         )}
         {paused && (
@@ -724,9 +751,10 @@ function ResultStep({ compact }: { compact: boolean }) {
     exportFile(k);
     setMsg('הורד ' + k.toUpperCase() + ' מהנתונים העדכניים של הפרויקט (' + p.lines.length + ' שורות).');
   };
-  const downloads: [string, string, ExportKind | 'sim'][] = [
-    ['ph ph-music-notes', 'הורד מוזיקה בלבד (Instrumental)', 'sim'],
-    ['ph ph-microphone', 'הורד שירה בלבד (Vocals)', 'sim'],
+  const srv = !!serverProject();
+  const downloads: [string, string, ExportKind | 'sim' | 'instrumental' | 'vocals'][] = [
+    ['ph ph-music-notes', 'הורד מוזיקה בלבד (Instrumental)', srv ? 'instrumental' : 'sim'],
+    ['ph ph-microphone', 'הורד שירה בלבד (Vocals)', srv ? 'vocals' : 'sim'],
     ['ph ph-subtitles', 'הורד כתוביות SRT', 'srt'],
     ['ph ph-text-align-right', 'הורד מילות שיר TXT', 'txt'],
     ['ph ph-brackets-curly', 'הורד פרויקט JSON', 'json'],
@@ -749,25 +777,28 @@ function ResultStep({ compact }: { compact: boolean }) {
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 16 }}>
           <button
             className="btn btn-primary"
-            onClick={() => { exportMp4(); setMsg('סימולציה: רינדור MP4 לא מתבצע באב־טיפוס. בגרסה המחוברת לשרת הקובץ יירד מכאן.'); }}
+            onClick={async () => {
+              const r = await exportMp4();
+              setMsg({ simulated: 'סימולציה: אין שרת עיבוד מחובר, ולכן רינדור MP4 לא מתבצע.', downloaded: 'סרטון הקריוקי הורד מהשרת.', rendering: 'השרת מרנדר את הסרטון עם העריכות האחרונות. לחץ שוב כשהרינדור יסתיים.', busy: 'השרת עסוק בעבודה אחרת.' }[r]);
+            }}
             style={{ height: 52, fontSize: 16, justifyContent: 'center' }}
           >
             <i className="ph ph-film-strip" />
             הורד סרטון קריוקי MP4
           </button>
-          <span className="muted" style={{ fontSize: 12, textWrap: 'pretty' }}>רינדור MP4 דורש את שרת העיבוד. באב־טיפוס הזה הוא מדומה ולא תתבצע הורדה.</span>
+          <span className="muted" style={{ fontSize: 12, textWrap: 'pretty' }}>{srv ? (renderFresh(p) ? 'הסרטון מעודכן לעריכות האחרונות.' : 'יש עריכות חדשות: הלחיצה תרנדר מחדש בשרת.') : 'רינדור MP4 דורש את שרת העיבוד. במצב הדגמה לא תתבצע הורדה.'}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: 8, borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)' }}>
           {downloads.map(([i, l, k]) => (
             <button
               key={l}
               className="row-btn"
-              onClick={() => (k === 'sim' ? setMsg('סימולציה: ערוצי אודיו נוצרים בשרת העיבוד. אין קובץ להורדה באב־טיפוס.') : dl(k))}
+              onClick={() => (k === 'sim' ? setMsg('סימולציה: ערוצי אודיו נוצרים בשרת העיבוד. אין קובץ להורדה במצב הדגמה.') : k === 'instrumental' || k === 'vocals' ? (downloadStem(k), setMsg('הורד ' + k + '.wav מהשרת.')) : dl(k))}
             >
               <i className={i} style={{ fontSize: 18, color: 'var(--color-accent-300)' }} />
               <span style={{ flex: 1, whiteSpace: 'normal' }}>{l}</span>
               <span className={k === 'sim' ? 'tag tag-neutral' : 'tag tag-outline'} style={{ fontSize: 11 }}>
-                {k === 'sim' ? 'דורש שרת' : 'קובץ אמיתי'}
+                {k === 'sim' ? 'דורש שרת' : k === 'instrumental' || k === 'vocals' ? 'מהשרת' : 'קובץ אמיתי'}
               </span>
             </button>
           ))}

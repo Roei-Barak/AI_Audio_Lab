@@ -4,6 +4,7 @@ import { fmtShort } from '../../lib/format';
 import { store, useStore } from '../../store/store';
 import type { Lang, Profile } from '../../store/types';
 import { ui } from '../../store/ui';
+import { isServer, submitJob } from '../../store/server';
 
 export function ProcessingOptions() {
   const { project: p, job, sim } = useStore();
@@ -24,7 +25,18 @@ export function ProcessingOptions() {
       </Empty>
     );
 
-  const start = () => {
+  const start = async () => {
+    if (isServer() && p.serverRev != null) {
+      try {
+        store.edit('הגדרות עיבוד נבחרו', (P) => void (P.processing = { profile, stems, language: lang }));
+        await submitJob('process', { profile, stems, language: lang, rerun: !!p.processed });
+        ui.go('queue');
+        ui.toast(p.processed ? 'עיבוד מחדש בשרת · התוצאה תוצג כהצעה' : 'נוסף לתור בשרת · משימת GPU אחת בכל רגע');
+      } catch (e) {
+        ui.toast((e as Error).message);
+      }
+      return;
+    }
     store.edit('הגדרות עיבוד נבחרו', (P) => {
       P.processing = { profile, stems, language: lang };
       P.stems = stems === 4 ? ['vocals', 'drums', 'bass', 'other'] : ['vocals', 'instrumental'];

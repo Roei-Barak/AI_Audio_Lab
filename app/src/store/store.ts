@@ -1,10 +1,11 @@
 // Shared project store: ONE project model used by Simple Mode, the lyrics editor, karaoke
 // preview and exports. Persists project JSON to localStorage (never media).
-// Processing and the server are SIMULATED: there is no backend in this build.
+// With a Lyra server reachable (backend.mode 'server') saves go to the server with revision-based
+// conflict detection and jobs run there; otherwise everything is simulated in the browser ("demo").
 import { useSyncExternalStore } from 'react';
 import { hhmmss, lineSpan } from '../lib/format';
 import { THEIRS_LINE_INDEX, THEIRS_LINE_TEXT, OTHER_USER, demoProject, makeWords } from './demo';
-import type { Job, Media, Mode, Profile, Project, SaveInfo, Sim, Source, StoreState } from './types';
+import type { Backend, Job, Media, Mode, Profile, Project, SaveInfo, Sim, Source, StoreState } from './types';
 
 export const KEYS = { project: 'lyra.v1.project', job: 'lyra.v1.job', ui: 'lyra.v1.ui' } as const;
 
@@ -50,6 +51,8 @@ function initialState(): StoreState {
     media: null,
     restored: ok,
     bgCatchUp: null,
+    backend: { mode: 'demo', reachable: false },
+    conflictTheirs: null,
   };
 }
 
@@ -68,6 +71,40 @@ const setSave = (save: Partial<SaveInfo>) => set({ save: { ...S.save, ...save } 
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+export type RemoteSaveResult = { ok: true; serverRev: number } | { conflict: Project } | { offline: true } | { error: string };
+/** Injected by the server module; saves a server-backed project with optimistic concurrency. */
+/** Injected by the server module: queue actions for jobs that run on the server. */
+let jobHook: ((a: 'cancel' | 'retry' | 'retry-fast' | 'remove') => Promise<void>) | null = null;
+const viaServer = (a: 'cancel' | 'retry' | 'retry-fast' | 'remove') => {
+  if (!S.job?.serverId || !jobHook) return false;
+  jobHook(a).catch((e) => listeners.forEach(() => console.error(e)));
+  return true;
+};
+let remoteSave: ((p: Project, force: boolean) => Promise<RemoteSaveResult>) | null = null;
+const isRemote = () => S.backend.mode === 'server' && S.project?.serverRev != null && !!remoteSave;
+/** While the server processes this project it owns the document; local edits wait and are pushed afterwards. */
+const remoteBusy = () => !!(S.job?.serverId && S.job.status === 'running' && S.job.kind === 'process');
+
+async function pushRemote(force = false) {
+  const p = S.project!;
+  const r = await remoteSave!(p, force);
+  if (S.project?.id !== p.id) return;
+  if ('ok' in r) {
+    // keep newer local edits; only adopt the new server revision
+    set({ project: { ...S.project!, serverRev: r.serverRev }, conflictTheirs: null });
+    write(KEYS.project, S.project);
+    setSave({ state: 'saved', at: hhmmss(), pending: 0, error: '' });
+  } else if ('conflict' in r) {
+    set({ conflictTheirs: r.conflict });
+    setSave({ state: 'conflict', at: hhmmss() });
+    conflictListeners.forEach((f) => f());
+  } else if ('offline' in r) {
+    set({ backend: { ...S.backend, reachable: false } });
+    setSave({ state: 'local', at: hhmmss() });
+  } else setSave({ state: 'failed', error: r.error });
+  persistUI();
+}
+
 /** Writes the project to browser storage, honouring the failure/offline/conflict simulations. */
 function doSave(manual: boolean) {
   clearTimeout(saveTimer);
@@ -84,6 +121,11 @@ function doSave(manual: boolean) {
       } catch (e) {
         return setSave({ state: 'failed', error: String((e as Error).message || e) });
       }
+      if (isRemote() && remoteBusy()) {
+        setSave({ state: 'local', at: hhmmss() });
+        return persistUI();
+      }
+      if (isRemote()) return void pushRemote();
       if (S.sim.offline) {
         setSave({ state: 'local', at: hhmmss() });
         return persistUI();
@@ -179,6 +221,18 @@ export const store = {
 
   resolveConflict(side: 'mine' | 'theirs') {
     if (!S.project) return;
+    if (isRemote() && S.conflictTheirs) {
+      if (side === 'theirs') {
+        undoStack = [...undoStack, { p: S.project, label: 'לפני טעינת הגרסה מהשרת' }];
+        set({ project: S.conflictTheirs, conflictTheirs: null });
+        write(KEYS.project, S.project);
+        setSave({ state: 'saved', at: hhmmss(), pending: 0, error: '' });
+      } else {
+        setSave({ state: 'saving' });
+        void pushRemote(true);
+      }
+      return;
+    }
     const p = clone(S.project);
     if (side === 'theirs') {
       const l = p.lines[THEIRS_LINE_INDEX];
@@ -201,12 +255,37 @@ export const store = {
     set({ sim: { ...S.sim, [k]: v } });
     if (k === 'offline' && wasOffline && !v && S.save.state === 'local') doSave(true);
   },
+  setBackend(b: Partial<Backend>) {
+    const wasReachable = S.backend.reachable;
+    set({ backend: { ...S.backend, ...b } });
+    if (!wasReachable && S.backend.reachable && S.save.state === 'local' && isRemote()) doSave(true);
+  },
+  setRemoteSaver(fn: typeof remoteSave) {
+    remoteSave = fn;
+  },
+  /** Replaces the open project with a server copy (new import, finished job, opening from the library). */
+  adoptProject(p: Project, opts: { resetHistory?: boolean } = {}) {
+    if (opts.resetHistory) {
+      undoStack = [];
+      redoStack = [];
+    }
+    write(KEYS.project, p);
+    set({ project: p, restored: false });
+  },
+  setJob(job: Job | null) {
+    set({ job });
+    persistJob();
+  },
+  setMediaRemote(media: Media | null) {
+    if (S.media && !S.media.remote) URL.revokeObjectURL(S.media.url);
+    set({ media });
+  },
   setMode(mode: Mode) {
     set({ mode });
     persistUI();
   },
   setMedia(file: File | null) {
-    if (S.media) URL.revokeObjectURL(S.media.url);
+    if (S.media && !S.media.remote) URL.revokeObjectURL(S.media.url);
     const media: Media | null = file ? { url: URL.createObjectURL(file), type: file.type, name: file.name } : null;
     set({ media });
   },
@@ -244,25 +323,31 @@ export const store = {
     set({ job: { id: 'j' + Date.now().toString(36), ...cfg, status: 'running', stage: 0, pct: 0, attempt: 1, startedAt: Date.now() } });
     persistJob();
   },
+  setJobHook(fn: typeof jobHook) {
+    jobHook = fn;
+  },
   cancelJob() {
+    if (viaServer('cancel')) return;
     if (!S.job || S.job.status !== 'running') return;
     set({ job: { ...S.job, status: 'cancelled' } });
     persistJob();
   },
   /** Resumes from the stage where the job stopped; completed stages are kept. */
   retryJob(fast = false) {
+    if (viaServer(fast ? 'retry-fast' : 'retry')) return;
     if (!S.job) return;
     set({ job: { ...S.job, status: 'running', pct: 0, attempt: S.job.attempt + 1, profile: fast ? 'מהיר' : S.job.profile } });
     persistJob();
   },
   removeJob() {
+    if (S.job?.serverId && S.job.status !== 'running' && viaServer('remove')) return;
     set({ job: null });
     persistJob();
   },
   /** Advances the simulated job by `dt` ms. Exposed for tests. */
   tick(dt: number) {
     const j = S.job;
-    if (!j || j.status !== 'running' || S.sim.offline) return;
+    if (!j || j.status !== 'running' || S.sim.offline || j.serverId) return;
     let { stage, pct } = j;
     pct += (j.profile === 'מהיר' ? 11 : 6) * Math.max(1, dt / 200);
     if (S.sim.crash && j.attempt === 1 && stage === 2 && pct >= 38) {
@@ -286,7 +371,7 @@ export const store = {
 // The processing server keeps working while the UI is closed: catch up on load.
 (function catchUp() {
   const j = S.job;
-  if (!j || j.status !== 'running' || !j.updatedAt) return;
+  if (!j || j.status !== 'running' || !j.updatedAt || j.serverId) return;
   let left = Math.min(10 * 60000, Date.now() - j.updatedAt);
   if (left < 3000) return;
   const from = jobPct(j);
