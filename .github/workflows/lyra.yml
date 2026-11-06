@@ -1,0 +1,67 @@
+name: Lyra Studio
+
+on:
+  push:
+    branches: [main, lyra-r4-frontend]
+    paths: ["app/**", "server/**", ".github/workflows/lyra.yml"]
+  pull_request:
+    paths: ["app/**", "server/**", ".github/workflows/lyra.yml"]
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: server } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # the mock engine needs no torch/models; install only the API deps for CI
+      - run: pip install fastapi==0.115.6 "uvicorn[standard]==0.32.1" python-multipart==0.0.20 pytest==8.3.4 httpx==0.28.1
+      - run: python -m pytest -q tests
+
+  app:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: app/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit -p .
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with: { name: lyra-web, path: app/dist }
+
+  e2e:
+    needs: [server, app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: app/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install fastapi==0.115.6 "uvicorn[standard]==0.32.1" python-multipart==0.0.20
+      - working-directory: app
+        run: |
+          npm ci && npm run build
+          npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
+      - name: demo mode (no server)
+        working-directory: app
+        run: |
+          npx vite preview --port 4173 --strictPort &
+          sleep 3
+          node e2e/acceptance.cjs
+          mkdir -p /tmp/shots && node e2e/screens.cjs /tmp/shots
+      - name: server mode (mock engine, real ffmpeg)
+        run: |
+          ffmpeg -y -v error -f lavfi -i "testsrc=size=640x360:rate=25:duration=14" -f lavfi -i "sine=frequency=440:duration=14" \
+            -f lavfi -i "sine=frequency=660:duration=14" -filter_complex "[1:a][2:a]amerge=inputs=2[a]" -map 0:v -map "[a]" \
+            -c:v libx264 -c:a aac -shortest /tmp/clip.mp4
+          export LYRA_ENGINE=mock LYRA_DATA_DIR=/tmp/lyra-data
+          (cd server && uvicorn lyra_server.app:app --port 8443 &)
+          sleep 4
+          node app/e2e/server.cjs /tmp/clip.mp4

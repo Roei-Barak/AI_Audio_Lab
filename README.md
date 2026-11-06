@@ -1,5 +1,14 @@
 # AI_AUDIO_LAB
 
+## Lyra Studio (karaoke studio): start here
+- `app/`: the web UI (React + Vite + TS). Simple Mode by default, plus the full studio.
+- `server/`: the processing server (FastAPI): YouTube/file import, separation, Whisper transcription, alignment, MP4 render, accounts. It serves the UI at http://localhost:8443.
+- On Windows: `run_lyra.bat`. Details: `server/README.md`, `app/README.md`. CI: `.github/workflows/lyra.yml`.
+- The earlier Gradio app (`app.py`, `web_ui.py`, `logic.py`, `backend.py`) stays as it was; the server reuses the same model stack. `legacy/app_from_broken_filename.py` is an older `app.py` that was uploaded with its code as the file name, which broke `git clone`.
+
+---
+
+
 AI_AUDIO_LAB is a modular, Python-based Smart DAW focused on research and experimental
 AI-assisted audio workflows. The project is organized to separate the real-time audio
 engine, UI, AI modules, and integrations while keeping a clear, testable architecture.
