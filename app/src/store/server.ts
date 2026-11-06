@@ -55,6 +55,7 @@ interface ServerJob {
   error: string | null;
   crash: boolean;
   log: string[];
+  estimate?: boolean;
   createdAt: number;
   startedAt: number | null;
   endedAt: number | null;
@@ -76,6 +77,7 @@ const toJob = (j: ServerJob): Job => ({
   error: j.error,
   crash: j.crash,
   log: j.log,
+  estimate: j.estimate,
 });
 
 // ---------- health ----------

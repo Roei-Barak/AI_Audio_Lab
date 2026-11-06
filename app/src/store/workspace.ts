@@ -62,6 +62,8 @@ export interface WS {
   invites: Invite[];
   settings: Settings;
   session: { userId: string | null };
+  /** server mode: accounts/settings/versions/outputs live on the Lyra server */
+  remote: { on: boolean; needsSetup: boolean; checked: boolean };
 }
 
 const KEY = 'lyra.v1.workspace';
@@ -83,6 +85,7 @@ const defaults = (): WS => ({
   invites: [],
   settings: { defaultProfile: 'מהיר', defaultStems: 2, language: 'auto', autosave: true, model: 'large-v3', separator: 'demucs', gpuSlots: 1, outputDir: '~/LyraStudio/outputs', apiToken: null },
   session: { userId: ME },
+  remote: { on: false, needsSetup: false, checked: false },
 });
 
 function load(): WS {
@@ -116,6 +119,11 @@ export const ws = {
     };
   },
   me: () => W.users.find((u) => u.id === W.session.userId) ?? null,
+  /** Internal: replace state from the server (no localStorage write for server-owned data). */
+  _setRemote(patch: Partial<WS>) {
+    W = { ...W, ...patch };
+    listeners.forEach((f) => f());
+  },
 
   // ---- versions (manual save points) ----
   saveVersion(label: string) {

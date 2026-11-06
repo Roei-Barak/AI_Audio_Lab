@@ -35,7 +35,7 @@ function defs(kind: StateKind, onClear?: () => void): Def {
       icon: 'ph ph-warning-circle',
       title: 'העיבוד נכשל בגלל תוכן הקובץ',
       text: 'לא זוהתה שירה בקובץ. אפשר לנסות שוב ברגישות נמוכה, להפריד מחדש ל־4 ערוצים, או להדביק מילים ידנית ולסנכרן אותן.',
-      actions: [['הדבק מילים ידנית', () => ui.go('subs-lyrics'), true], ['העלה קובץ אחר', toSimple]],
+      actions: [['הדבק מילים ידנית', () => { ui.go('subs-lyrics'); ui.open('lyrics'); }, true], ['העלה קובץ אחר', toSimple]],
     },
     recovery: {
       icon: 'ph ph-clock-counter-clockwise',

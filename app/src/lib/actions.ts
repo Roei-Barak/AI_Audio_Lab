@@ -1,7 +1,7 @@
 import { store } from '../store/store';
 import { ui } from '../store/ui';
-import { ws } from '../store/workspace';
 import { downloadExport, type ExportKind } from './format';
+import { recordOutput, saveVersion } from '../store/remoteWs';
 import { fileUrl, flushSave, isServer, renderFresh, submitJob } from '../store/server';
 
 /** Real download from the edited project data, recorded in the outputs library. */
@@ -9,7 +9,7 @@ export function exportFile(kind: ExportKind) {
   const p = store.get().project;
   if (!p) return;
   downloadExport(p, kind);
-  ws.addOutput(kind);
+  void recordOutput(kind);
 }
 
 function download(url: string) {
@@ -33,7 +33,7 @@ export const serverProject = () => {
 export async function exportMp4(): Promise<'downloaded' | 'rendering' | 'simulated' | 'busy'> {
   const p = serverProject();
   if (!p) {
-    ws.addOutput('mp4', true);
+    void recordOutput('mp4', true);
     ui.toast('סימולציה: רינדור MP4 דורש את שרת העיבוד. נרשם בספריית התוצרים כמדומה.');
     return 'simulated';
   }
@@ -46,7 +46,7 @@ export async function exportMp4(): Promise<'downloaded' | 'rendering' | 'simulat
   const cur = store.get().project!;
   if (renderFresh(cur)) {
     download(fileUrl(cur.id, 'karaoke', true));
-    ws.addOutput('mp4');
+    void recordOutput('mp4');
     return 'downloaded';
   }
   try {
@@ -64,11 +64,12 @@ export function downloadStem(name: 'vocals' | 'instrumental' | 'drums' | 'bass' 
   const p = serverProject();
   if (!p) return false;
   download(fileUrl(p.id, name, true));
+  void recordOutput(name as 'vocals');
   return true;
 }
 
 /** Manual save (⌘S): saves and creates a version checkpoint. */
 export function saveCheckpoint() {
   store.saveNow();
-  ws.saveVersion('נקודת שמירה ידנית');
+  void saveVersion('נקודת שמירה ידנית');
 }

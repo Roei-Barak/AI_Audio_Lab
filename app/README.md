@@ -21,7 +21,11 @@ node e2e/screens.cjs /tmp   # every route + auth, invite, find/replace, versions
 - **Real SRT/TXT/JSON downloads** built from the edited data.
 
 ## Processing server
-`../server` is the real backend: import (yt-dlp or upload), separation, Whisper transcription with word timing, alignment and ffmpeg MP4 render, with one GPU job at a time, crash checkpoints, cancel and resume, and save conflicts detected by server revision. When `/api/health` answers, the app switches to server mode automatically: the "שרת Lyra" badge appears, saves go to the server, and MP4, Vocals and Instrumental downloads are real files. Without a server, everything below stays simulated (demo mode). See `../server/README.md`.
+`../server` is the real backend: import (yt-dlp or upload), separation, Whisper transcription with word timing, alignment and ffmpeg MP4 render, with one GPU job at a time, crash checkpoints, cancel and resume, and save conflicts detected by server revision. When `/api/health` answers, the app switches to server mode automatically. The "שרת Lyra" badge appears, and:
+- Sign-in, invites, roles, settings, version checkpoints and the outputs library live on the server.
+- Saves go to the server.
+- MP4, Vocals and Instrumental downloads are real files.
+- Pasted lyrics are aligned to the transcription. Without a server, everything below stays simulated (demo mode). See `../server/README.md`.
 
 ## Simulated in demo mode (no server)
 YouTube import, stem separation, transcription, alignment, MP4 render and Vocals/Instrumental downloads; the server, the connection state, and the other user in a conflict. The UI labels each of these. Uploaded local media plays for real, but with its original audio.

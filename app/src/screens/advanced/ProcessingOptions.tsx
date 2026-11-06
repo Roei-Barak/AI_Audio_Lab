@@ -48,7 +48,7 @@ export function ProcessingOptions() {
 
   return (
     <div dir="rtl" style={{ height: '100%', overflow: 'auto', background: 'var(--color-bg)' }}>
-      <div style={{ maxWidth: 1180, margin: '0 auto', padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div className="page-pad" style={{ maxWidth: 1180, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
         <h2 style={{ fontSize: 28, margin: 0 }}>בחירת עיבוד</h2>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28, alignItems: 'flex-start' }}>
           <section style={{ flex: '1 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>

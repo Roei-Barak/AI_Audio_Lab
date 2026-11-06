@@ -7,8 +7,8 @@ export type Route =
   | 'simple' | 'options' | 'queue' | 'subs' | 'subs-lyrics' | 'subs-word' | 'karaoke'
   | 'dashboard' | 'library' | 'project' | 'project-versions' | 'audio' | 'video' | 'export' | 'outputs' | 'team'
   | 'settings' | 'settings-general' | 'settings-models' | 'settings-storage' | 'settings-api'
-  | 'login' | 'invite' | 'forgot' | `state:${StateKind}`;
-export type ModalKind = 'conflict' | 'airerun' | 'shortcuts' | 'share' | 'invite' | 'find' | 'delete' | 'restore';
+  | 'login' | 'invite' | 'forgot' | 'setup' | `state:${StateKind}`;
+export type ModalKind = 'conflict' | 'airerun' | 'shortcuts' | 'share' | 'invite' | 'find' | 'delete' | 'restore' | 'lyrics';
 export type SimpleStep = 'input' | 'progress' | 'preview' | 'result';
 
 export const STATE_KINDS: StateKind[] = ['background', 'offline', 'crash', 'failed', 'recovery', 'emptyDashboard', 'emptyLibrary', 'loading', 'forbidden', 'notfound'];
@@ -16,7 +16,7 @@ export const ADV_ROUTES: Route[] = [
   'options', 'queue', 'subs', 'subs-lyrics', 'subs-word', 'karaoke',
   'dashboard', 'library', 'project', 'project-versions', 'audio', 'video', 'export', 'outputs', 'team',
   'settings', 'settings-general', 'settings-models', 'settings-storage', 'settings-api',
-  'login', 'invite', 'forgot', ...STATE_KINDS.map((k) => `state:${k}` as Route),
+  'login', 'invite', 'forgot', 'setup', ...STATE_KINDS.map((k) => `state:${k}` as Route),
 ];
 const STEP_KEY = 'lyra.v1.simpleStep';
 const ADV_KEY = 'lyra.v1.advRoute';
@@ -46,7 +46,7 @@ const safeSet = (k: string, v: string) => {
 };
 
 function initial(): UIState {
-  const h = typeof location !== 'undefined' ? decodeURIComponent(location.hash.slice(1)) : '';
+  const h = typeof location !== 'undefined' ? decodeURIComponent(location.hash.slice(1)).split('?')[0] : '';
   const S = store.get();
   let route: Route = S.mode === 'advanced' ? ((safeGet(ADV_KEY) as Route) || 'dashboard') : 'simple';
   if (h === 'simple' || ADV_ROUTES.includes(h as Route)) route = h as Route;
@@ -77,10 +77,10 @@ export const ui = {
   go(route: Route) {
     const mode = route === 'simple' ? 'simple' : 'advanced';
     if (store.get().mode !== mode) store.setMode(mode);
-    if (route !== 'simple' && !['login', 'invite', 'forgot'].includes(route)) safeSet(ADV_KEY, route);
+    if (route !== 'simple' && !['login', 'invite', 'forgot', 'setup'].includes(route)) safeSet(ADV_KEY, route);
     set({ route, modal: null });
     try {
-      history.replaceState(null, '', '#' + route);
+      history.replaceState(null, '', '#' + route + (['invite', 'forgot'].includes(route) && location.hash.includes('?t=') ? '?t=' + location.hash.split('?t=')[1] : ''));
     } catch {
       /* ignore */
     }

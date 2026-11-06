@@ -19,6 +19,42 @@ class Cancelled(Exception):
     pass
 
 
+# Rough seconds of work per second of audio, used only to show an *estimated* progress bar for model stages
+# (the models do not report progress). Marked estimate=True so the UI can say so.
+EST = {("separate", "cuda"): 0.12, ("separate", "cpu"): 1.2, ("transcribe", "cuda"): 0.08, ("transcribe", "cpu"): 0.9}
+
+
+class Estimator:
+    def __init__(self, q: "JobQueue", job: dict, stage: str, duration: float, profile: str):
+        dev = "cuda" if _cuda() else "cpu"
+        self.expected = max(3.0, duration * EST.get((stage, dev), 0.5) * (1.8 if profile == "איכותי" else 1.0))
+        self.q, self.job, self.stop = q, job, threading.Event()
+
+    def __enter__(self):
+        t0 = time.time()
+
+        def beat():
+            while not self.stop.wait(1.0):
+                frac = (time.time() - t0) / self.expected
+                self.q._set(self.job, pct=round(95 * (1 - 2.718 ** (-1.6 * frac)), 1), estimate=True)
+
+        threading.Thread(target=beat, daemon=True).start()
+        return self
+
+    def __exit__(self, *a):
+        self.stop.set()
+        self.q._set(self.job, estimate=False)
+
+
+def _cuda() -> bool:
+    try:
+        import torch  # type: ignore
+
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
 class JobQueue:
     def __init__(self, cfg: Config, storage: Storage, autostart: bool = True):
         self.cfg = cfg
@@ -67,7 +103,8 @@ class JobQueue:
             if j["status"] == "queued":
                 j.update(status="cancelled", endedAt=time.time())
             elif j["status"] == "running":
-                j["cancelRequested"] = True  # honoured between stages; a model call cannot be interrupted midway
+                # ffmpeg steps (render) stop at once; a model call (separation/transcription) finishes its stage first
+                j["cancelRequested"] = True
             self._persist()
             return self._public(j)
 
@@ -162,7 +199,7 @@ class JobQueue:
                 self._set(job, pct=100)
             self._set(job, status="done", stage=len(STAGES), endedAt=time.time())
             log("done")
-        except Cancelled:
+        except (Cancelled, InterruptedError):
             self._set(job, status="cancelled", endedAt=time.time())
             log("cancelled by user · checkpoint kept")
         except engines.SourceError as e:
@@ -195,7 +232,8 @@ class JobQueue:
                 log("stems present")
                 return
             wav = engines.extract_wav(cfg, sorted(pdir.glob("source.*"))[0], pdir / "audio.wav")
-            engines.separate(cfg, wav, stems_dir, job["stems"], job["profile"], log)
+            with Estimator(self, job, "separate", float(src.get("duration") or 0), job["profile"]):
+                engines.separate(cfg, wav, stems_dir, job["stems"], job["profile"], log)
             wav.unlink(missing_ok=True)
             self.st.patch_project(job["projectId"], lambda d: d.update(stems=need))
         elif i == 2:  # transcribe (GPU)
@@ -205,7 +243,8 @@ class JobQueue:
             if words_f.exists() and job["kind"] == "process" and not p.get("rerun"):
                 log("transcription present")
                 return
-            words = engines.transcribe(cfg, pdir / "stems" / "vocals.wav", job["language"], job["profile"], float(src.get("duration") or 0), log)
+            with Estimator(self, job, "transcribe", float(src.get("duration") or 0), job["profile"]):
+                words = engines.transcribe(cfg, pdir / "stems" / "vocals.wav", job["language"], job["profile"], float(src.get("duration") or 0), log)
             if not words:
                 raise engines.SourceError("לא זוהתה שירה בקובץ. אפשר להדביק מילים ידנית ולסנכרן אותן.")
             words_f.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
@@ -230,7 +269,15 @@ class JobQueue:
             source = sorted(pdir.glob("source.*"))[0]
             out = pdir / "render" / "karaoke.mp4"
             tmp = out.with_name("karaoke.tmp.mp4")
-            engines.render(cfg, p, source, pdir / "stems" / "instrumental.wav", tmp, bool(p["source"].get("hasVideo")), float(p["source"].get("duration") or 0), log)
+            last = [0.0]
+
+            def on_pct(x: float) -> None:
+                if x - last[0] >= 1:
+                    last[0] = x
+                    self._set(job, pct=round(x, 1), estimate=False)
+
+            engines.render(cfg, p, source, pdir / "stems" / "instrumental.wav", tmp, bool(p["source"].get("hasVideo")), float(p["source"].get("duration") or 0), log,
+                           on_pct=on_pct, should_stop=lambda: job["cancelRequested"])
             tmp.replace(out)
             # The MP4 matches the revision that was rendered; later saves make it stale.
             self.st.patch_project(job["projectId"], lambda d: d.update(renderedRev=p.get("serverRev"), renderedAt=time.time()), bump=False)

@@ -4,9 +4,10 @@ import { AI_ALTERNATES, OTHER_USER, THEIRS_LINE_INDEX, THEIRS_LINE_TEXT } from '
 import { store, useStore } from '../store/store';
 import { ui, useUI, type ModalKind } from '../store/ui';
 import { ROLE_L, inviteUrl, useWS, ws, type Role } from '../store/workspace';
-import { hhmm } from '../lib/format';
+import { alignLyricsLocal, hhmm } from '../lib/format';
+import * as RW from '../store/remoteWs';
 import { serverProject } from '../lib/actions';
-import { deleteRemoteProject, isServer, submitJob } from '../store/server';
+import { api, deleteRemoteProject, isServer, submitJob } from '../store/server';
 
 const META: Record<ModalKind, [string, string, number]> = {
   conflict: ['התנגשות גרסאות', 'ph ph-git-merge', 620],
@@ -17,6 +18,7 @@ const META: Record<ModalKind, [string, string, number]> = {
   find: ['חיפוש והחלפה', 'ph ph-magnifying-glass', 540],
   delete: ['מחיקת פרויקט', 'ph ph-trash', 460],
   restore: ['לשחזר גרסה?', 'ph ph-clock-counter-clockwise', 480],
+  lyrics: ['הדבקת מילים', 'ph ph-clipboard-text', 620],
 };
 
 export function ModalHost() {
@@ -48,6 +50,7 @@ export function ModalHost() {
         {modal === 'find' && <FindReplace />}
         {modal === 'delete' && <DeleteProject />}
         {modal === 'restore' && <RestoreVersion id={modalArg} />}
+        {modal === 'lyrics' && <PasteLyrics />}
       </div>
     </div>
   );
@@ -99,7 +102,7 @@ function Conflict() {
         <button
           className="btn btn-primary"
           onClick={() => {
-            ws.saveVersion('לפני פתרון התנגשות');
+            void RW.saveVersion('לפני פתרון התנגשות');
             store.resolveConflict(side);
             ui.close();
             ui.toast(conflictTheirs ? (side === 'mine' ? 'הגרסה שלך נשמרה בשרת' : 'הגרסה מהשרת נטענה · ⌘Z מחזיר את שלך') : side === 'mine' ? 'השינויים שלך נשמרו · הגרסה של ' + OTHER_USER + ' בהיסטוריה' : 'הגרסה של ' + OTHER_USER + ' נטענה · השינויים שלך בהיסטוריה');
@@ -155,7 +158,7 @@ function AiRerunServer() {
   const rows = p.lines.map((l, i) => ({ i, cur: lineText(l), next: sug[i] ? lineText(sug[i]) : '', locked: l.manual || l.words.some((w) => w.manual) })).filter((r) => r.next && r.next !== r.cur);
   const accepted = rows.filter((r) => !r.locked && dec[r.i] === 'a');
   const finish = (apply: boolean) => {
-    if (apply && accepted.length) ws.saveVersion('לפני החלת הצעות AI');
+    if (apply && accepted.length) void RW.saveVersion('לפני החלת הצעות AI');
     store.edit(apply ? 'הצעות AI שנבחרו הוחלו (' + accepted.length + ')' : 'הצעת AI נדחתה', (P) => {
       if (apply) accepted.forEach((r) => {
         const s2 = sug[r.i];
@@ -267,7 +270,7 @@ function AiRerunDemo() {
           className="btn btn-primary"
           disabled={!accepted.length}
           onClick={() => {
-            ws.saveVersion('לפני החלת הצעות AI');
+            void RW.saveVersion('לפני החלת הצעות AI');
             store.edit('הצעות AI שנבחרו הוחלו (' + accepted.length + ')', (P) => {
               accepted.forEach((r) => {
                 const l = P.lines.find((x) => x.id === r.lineId);
@@ -372,7 +375,7 @@ function InviteForm({ embedded }: { embedded?: boolean }) {
           <select className="input" value={days} onChange={(e) => setDays(+e.target.value)}><option value={1}>24 שעות</option><option value={7}>7 ימים</option></select>
         </label>
       </div>
-      <button className="btn btn-primary" disabled={!name.trim()} style={{ alignSelf: 'flex-start' }} onClick={() => { const inv = ws.createInvite(name.trim(), role, days, ''); setLink(inviteUrl(inv.token, sim.conn === 'remote')); }}>
+      <button className="btn btn-primary" disabled={!name.trim()} style={{ alignSelf: 'flex-start' }} onClick={async () => { try { const inv = await RW.createInvite(name.trim(), role, days); setLink(isServer() ? location.origin + '/#invite?t=' + inv.token : inviteUrl(inv.token, sim.conn === 'remote')); } catch (e) { ui.toast((e as Error).message); } }}>
         <i className="ph ph-link" />צור קישור הזמנה
       </button>
     </>
@@ -491,8 +494,59 @@ function RestoreVersion({ id }: { id: string | null }) {
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button className="btn btn-secondary" onClick={() => ui.close()}>ביטול</button>
-        <button className="btn btn-primary" onClick={() => { ws.restoreVersion(v.id); ui.close(); ui.toast('הגרסה שוחזרה · ⌘Z לביטול'); }}>
+        <button className="btn btn-primary" onClick={async () => { await RW.restoreVersion(v.id); ui.close(); ui.toast('הגרסה שוחזרה · ⌘Z לביטול'); }}>
           <i className="ph ph-clock-counter-clockwise" />שחזר
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** Paste the correct lyrics; the server aligns them to the transcription timing (demo: keeps/spreads timings). */
+function PasteLyrics() {
+  const { project: p } = useStore();
+  const [text, setText] = useState(() => (p ? p.lines.map(lineText).join('\n') : ''));
+  const [busy, setBusy] = useState(false);
+  if (!p) return null;
+  const n = text.split('\n').filter((l) => l.trim()).length;
+  return (
+    <>
+      <div className="muted" style={{ fontSize: 13 }}>שורה אחת בכל שורה. {serverProject() ? 'השרת יתאים את המילים לזמנים מהתמלול; מילים שלא נמצאו יקבלו זמן משוער ויסומנו לבדיקה.' : 'במצב הדגמה הזמנים הקיימים נשמרים כשמספר המילים זהה, ואחרת מתחלקים לאורך השיר.'}</div>
+      <textarea className="input" dir="auto" aria-label="מילות השיר" value={text} onChange={(e) => setText(e.target.value)} rows={12} style={{ width: '100%', fontSize: 14, lineHeight: 1.6, resize: 'vertical', boxSizing: 'border-box' }} />
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+        <span className="dim" style={{ marginInlineEnd: 'auto', fontSize: 12 }}>{n} שורות · הגרסה הנוכחית תישמר כנקודת שמירה</span>
+        <button className="btn btn-secondary" onClick={() => ui.close()}>ביטול</button>
+        <button
+          className="btn btn-primary"
+          disabled={!n || busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              let lines = alignLyricsLocal(text, p);
+              let timing: 'word' | 'line' = p.timing;
+              let aligned = false;
+              if (serverProject()) {
+                const r = await api<{ lines: typeof lines; timing: 'word' | 'line'; aligned: boolean }>(`/api/projects/${p.id}/lyrics`, { method: 'POST', body: JSON.stringify({ text }) });
+                lines = r.lines;
+                timing = r.timing;
+                aligned = r.aligned;
+              }
+              await RW.saveVersion('לפני הדבקת מילים');
+              store.edit('הודבקו מילים (' + lines.length + ' שורות)', (P) => {
+                P.lines = lines;
+                P.timing = timing;
+              });
+              ui.close();
+              ui.toast(aligned ? 'המילים הותאמו לתזמון מהתמלול' : timing === 'line' ? 'אין תמלול: נוצר תזמון שורות בלבד' : 'המילים הוחלו');
+            } catch (e) {
+              ui.toast((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <i className="ph ph-check" />
+          החל וסנכרן
         </button>
       </div>
     </>

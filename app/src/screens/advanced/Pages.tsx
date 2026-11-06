@@ -8,6 +8,7 @@ import { jobPct, store, useStore } from '../../store/store';
 import type { Res } from '../../store/types';
 import { ui } from '../../store/ui';
 import { ROLE_L, inviteUrl, useWS, ws, type Role } from '../../store/workspace';
+import * as RW from '../../store/remoteWs';
 import { Card, KV, Page } from './Sidebar';
 import { StateView } from './SystemStates';
 
@@ -175,11 +176,11 @@ export function ExportScreen() {
           <Card>
             <span className="kicker">קבצים אמיתיים מהנתונים הערוכים</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {(['srt', 'lrc', 'txt', 'json'] as const).map((k) => (
+              {(['srt', 'lrc', 'ass', 'txt', 'json'] as const).map((k) => (
                 <button key={k} className="btn btn-secondary" onClick={() => exportFile(k)}><i className="ph ph-download-simple" />{k.toUpperCase()}</button>
               ))}
             </div>
-            <span className="dim" style={{ fontSize: 12 }}>LRC כולל סימני זמן למילים כשיש תזמון ברמת מילה. ASS לאפקט קריוקי מדורג הוא יכולת עתידית.</span>
+            <span className="dim" style={{ fontSize: 12 }}>LRC כולל סימני זמן למילים כשיש תזמון ברמת מילה. ASS כולל את אפקט הקריוקי המדורג (\\kf) ואת העיצוב שבחרת.</span>
           </Card>
         </div>
         <Card style={{ flex: '1 1 380px', minWidth: 0 }}>
@@ -208,10 +209,11 @@ export function Team() {
               <div style={{ fontSize: 13.5 }}>{u.name}{u.id === me?.id ? ' (אתה)' : ''}</div>
               <div className="dim" dir="ltr" style={{ fontSize: 11.5, textAlign: 'right' }}>@{u.user}</div>
             </div>
-            <select className="input" aria-label={'תפקיד של ' + u.name} value={u.role} disabled={!isAdmin || u.id === me?.id} onChange={(e) => ws.setRole(u.id, e.target.value as Role) && ui.toast('התפקיד עודכן')} style={{ width: 110 }}>
+            <select className="input" aria-label={'תפקיד של ' + u.name} value={u.role} disabled={!isAdmin || u.id === me?.id} onChange={async (e) => { const r = await RW.setRole(u.id, e.target.value as Role); ui.toast(r === true ? 'התפקיד עודכן' : r); }} style={{ width: 110 }}>
               {(Object.keys(ROLE_L) as Role[]).map((r) => <option key={r} value={r}>{ROLE_L[r]}</option>)}
             </select>
-            {isAdmin && u.id !== me?.id && <button className="btn btn-ghost btn-icon" aria-label={'הסר את ' + u.name} onClick={() => confirm('להסיר את ' + u.name + '?') && ws.removeUser(u.id)}><i className="ph ph-user-minus" /></button>}
+            {isAdmin && u.id !== me?.id && <button className="btn btn-ghost btn-icon" aria-label={'הסר את ' + u.name} onClick={() => confirm('להסיר את ' + u.name + '?') && RW.removeUser(u.id).catch((e) => ui.toast(e.message))}><i className="ph ph-user-minus" /></button>}
+            {isAdmin && u.id !== me?.id && ws.get().remote.on && <button className="btn btn-ghost" onClick={async () => { const t = await RW.resetLink(u.id); prompt('קישור איפוס חד־פעמי ל־' + u.name + ' (24 שעות). העתק ושלח בעצמך:', location.origin + '/#forgot?t=' + t); }} style={{ fontSize: 12 }}>קישור איפוס</button>}
           </div>
         ))}
       </Card>
@@ -233,9 +235,9 @@ export function Team() {
           return (
             <div key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
               <span style={{ flex: 1, minWidth: 120 }}>{i.name} · {ROLE_L[i.role]}</span>
-              <span dir="ltr" className="dim" style={{ fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5 }}>{inviteUrl(i.token, sim.conn === 'remote')}</span>
+              <span dir="ltr" className="dim" style={{ fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5 }}>{i.token ? inviteUrl(i.token, sim.conn === 'remote') : 'הקישור הוצג פעם אחת בעת יצירתו'}</span>
               <span className={st === 'פעיל' ? 'tag tag-accent' : 'tag tag-neutral'}>{st}</span>
-              {isAdmin && <button className="btn btn-ghost" onClick={() => ws.revokeInvite(i.id)}>בטל</button>}
+              {isAdmin && <button className="btn btn-ghost" onClick={() => RW.revokeInvite(i.id)}>בטל</button>}
             </div>
           );
         })}

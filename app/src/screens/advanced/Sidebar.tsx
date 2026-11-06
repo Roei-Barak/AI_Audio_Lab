@@ -1,6 +1,7 @@
 import { useStore } from '../../store/store';
 import { ui, useUI, type Route } from '../../store/ui';
 import { ROLE_L, useWS, ws } from '../../store/workspace';
+import * as RW from '../../store/remoteWs';
 
 const MAIN: [Route, string, string][] = [
   ['dashboard', 'לוח בקרה', 'squares-four'],
@@ -72,7 +73,7 @@ export function Sidebar() {
               <div style={{ fontSize: 13 }}>{me.name}</div>
               <div className="dim" style={{ fontSize: 11 }}>{ROLE_L[me.role]}</div>
             </div>
-            <button className="btn btn-ghost btn-icon" title="התנתקות" aria-label="התנתקות" onClick={() => { ws.logout(); ui.go('login'); }} style={{ color: 'var(--color-neutral-400)' }}>
+            <button className="btn btn-ghost btn-icon" title="התנתקות" aria-label="התנתקות" onClick={async () => { await RW.logout(); ui.go('login'); }} style={{ color: 'var(--color-neutral-400)' }}>
               <i className="ph ph-sign-out" />
             </button>
           </div>
@@ -86,7 +87,7 @@ export function Sidebar() {
 export function Page({ title, sub, actions, children, max = 1180 }: { title: string; sub?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; max?: number }) {
   return (
     <div dir="rtl" style={{ height: '100%', overflow: 'auto', background: 'var(--color-bg)' }}>
-      <div style={{ maxWidth: max, margin: '0 auto', padding: '28px 34px 40px', display: 'flex', flexDirection: 'column', gap: 18, boxSizing: 'border-box' }}>
+      <div className="page-pad" style={{ maxWidth: max, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18, boxSizing: 'border-box' }}>
         <header style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
           <h2 style={{ fontSize: 28, margin: 0 }}>{title}</h2>
           {sub && <span className="dim" style={{ fontSize: 14, paddingBottom: 4 }}>{sub}</span>}

@@ -427,7 +427,7 @@ function ProgressStep({ compact }: { compact: boolean }) {
                   />
                   <span style={{ flex: 1, fontSize: 15, color: done || run || fail ? 'var(--color-text)' : 'var(--color-neutral-500)' }}>{l}</span>
                   <span className="num muted" style={{ fontSize: 12.5 }}>
-                    {done ? 'הושלם' : run ? Math.round(job.pct) + '%' : fail ? 'נכשל ב־' + Math.round(job.pct) + '%' : canc ? 'בוטל' : 'ממתין'}
+                    {done ? 'הושלם' : run ? (job.estimate ? '~' : '') + Math.round(job.pct) + '%' + (job.estimate ? ' (הערכה)' : '') : fail ? 'נכשל ב־' + Math.round(job.pct) + '%' : canc ? 'בוטל' : 'ממתין'}
                   </span>
                   <button className="btn btn-ghost" aria-expanded={!!open[i]} onClick={() => setOpen({ ...open, [i]: !open[i] })} style={{ height: 28, fontSize: 12 }}>
                     {open[i] ? 'הסתר' : 'פרטים'}

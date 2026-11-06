@@ -55,7 +55,7 @@ export function Queue() {
 
   return (
     <div dir="rtl" style={{ height: '100%', overflow: 'auto', background: 'var(--color-bg)' }}>
-      <div style={{ maxWidth: 1180, margin: '0 auto', padding: '28px 34px', display: 'flex', flexWrap: 'wrap', gap: 26 }}>
+      <div className="page-pad" style={{ maxWidth: 1180, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 26 }}>
         <div style={{ flex: '1 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
           <header style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
             <h2 style={{ fontSize: 28, margin: 0 }}>תור עיבודי AI</h2>
@@ -94,7 +94,7 @@ export function Queue() {
                       {l}
                     </div>
                     <div className="dim" style={{ fontSize: 11.5 }}>
-                      {RES[i] + (k === 'run' ? ' · ' + Math.round(job.pct) + '%' : k === 'fail' ? ' · קרס ב־' + Math.round(job.pct) + '%' : k === 'stop' ? ' · בוטל' : k === 'done' ? ' · הושלם' : '')}
+                      {RES[i] + (k === 'run' ? ' · ' + (job.estimate ? '~' : '') + Math.round(job.pct) + '%' + (job.estimate ? ' הערכה' : '') : k === 'fail' ? ' · קרס ב־' + Math.round(job.pct) + '%' : k === 'stop' ? ' · בוטל' : k === 'done' ? ' · הושלם' : '')}
                     </div>
                   </div>
                 );

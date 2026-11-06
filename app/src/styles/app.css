@@ -319,3 +319,15 @@ select:focus-visible {
     display: none !important;
   }
 }
+
+.page-pad {
+  padding: 28px 34px 40px;
+}
+@media (max-width: 720px) {
+  .page-pad {
+    padding: 16px 16px 28px;
+  }
+  .page-pad h2 {
+    font-size: 22px !important;
+  }
+}

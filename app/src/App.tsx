@@ -6,7 +6,7 @@ import { ProcessingOptions } from './screens/advanced/ProcessingOptions';
 import { Queue } from './screens/advanced/Queue';
 import { Dashboard, ExportScreen, Library, Outputs, Team } from './screens/advanced/Pages';
 import { AudioStudio, ProjectDetails, VideoEditor } from './screens/advanced/ProjectScreens';
-import { AcceptInvite, Forgot, Login, Settings } from './screens/advanced/SettingsAuth';
+import { AcceptInvite, Forgot, Login, Settings, Setup } from './screens/advanced/SettingsAuth';
 import { Sidebar } from './screens/advanced/Sidebar';
 import { StateView } from './screens/advanced/SystemStates';
 import { saveCheckpoint } from './lib/actions';
@@ -48,7 +48,7 @@ export function App() {
   const { route, toast } = useUI();
   const { job, sim, save, project } = S;
   const isSimple = route === 'simple';
-  const { session } = useWS();
+  const { session, remote: wsRemote } = useWS();
 
   // One-time "restored" notice, global shortcuts.
   const restoredShown = useRef(false);
@@ -188,7 +188,7 @@ export function App() {
         </div>
       </div>
       <main className="stage">
-        {isSimple ? (session.userId ? <SimpleMode /> : <Login />) : <Advanced route={route} />}
+        {isSimple ? (session.userId && !(wsRemote.on && wsRemote.needsSetup) ? <SimpleMode /> : <AuthGate route={route} />) : <Advanced route={route} />}
         {S.backend.mode === 'server' && !S.backend.reachable && (
           <div className="banner-offline" role="status">
             <i className="ph ph-plugs" style={{ color: 'var(--color-accent-200)' }} />
@@ -237,19 +237,23 @@ function JumpSelect({ route }: { route: Route }) {
   );
 }
 
-const AUTH: Route[] = ['login', 'invite', 'forgot'];
+const AUTH: Route[] = ['login', 'invite', 'forgot', 'setup'];
+
+function AuthGate({ route }: { route: Route }) {
+  const { remote } = useWS();
+  if (remote.on && remote.needsSetup) return <Setup />;
+  return route === 'invite' ? <AcceptInvite /> : route === 'forgot' ? <Forgot /> : <Login />;
+}
 const FULL: Route[] = ['subs', 'subs-lyrics', 'subs-word', 'karaoke'];
 
 function Advanced({ route }: { route: Route }) {
   const { project } = useStore();
-  const { session } = useWS();
+  const { session, remote } = useWS();
   const needsProject = FULL.includes(route);
   useEffect(() => {
     if (needsProject && !project) store.ensure();
   }, [needsProject, project]);
-  if (AUTH.includes(route) || !session.userId) {
-    return route === 'invite' ? <AcceptInvite /> : route === 'forgot' ? <Forgot /> : <Login />;
-  }
+  if (AUTH.includes(route) || !session.userId || (remote.on && remote.needsSetup)) return <AuthGate route={route} />;
   const screen = (() => {
     if (route.startsWith('state:')) return <StateView kind={route.slice(6) as StateKind} />;
     switch (route) {

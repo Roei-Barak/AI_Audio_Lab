@@ -97,7 +97,7 @@ export function KaraokeStudio() {
               {serverProject() ? (renderFresh(p) ? 'הורד MP4' : 'רנדר MP4 בשרת') : 'ייצוא MP4 (דורש שרת · מדומה)'}
             </button>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {(['srt', 'lrc', 'txt', 'json'] as const).map((k) => (
+              {(['srt', 'lrc', 'ass', 'txt', 'json'] as const).map((k) => (
                 <button key={k} className="btn btn-secondary" onClick={() => exportFile(k)}>
                   <i className="ph ph-download-simple" />
                   {k.toUpperCase()}

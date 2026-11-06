@@ -314,6 +314,7 @@ export function LyricsStudio({ mode }: { mode: EditorMode }) {
         <div style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <button className="btn btn-ghost" onClick={() => ui.open('shortcuts')} aria-label="קיצורי מקלדת"><i className="ph ph-keyboard" /></button>
           <button className="btn btn-ghost" onClick={() => ui.open('airerun')}><i className="ph ph-sparkle" />הרץ AI מחדש (הצעה)</button>
+          <button className="btn btn-ghost" onClick={() => ui.open('lyrics')} title="הדבק את המילים הנכונות וסנכרן"><i className="ph ph-clipboard-text" />הדבק מילים</button>
           <button className="btn btn-ghost" onClick={() => ui.open('find')} aria-label="חיפוש והחלפה" title="חיפוש והחלפה ⌘F"><i className="ph ph-magnifying-glass" /></button>
           <button className="btn btn-ghost" onClick={() => { saveCheckpoint(); ui.toast('נשמר · נוצרה נקודת שמירה'); }}><i className="ph ph-floppy-disk" />שמור</button>
           <button className="btn btn-secondary" onClick={() => ui.go('karaoke')}><i className="ph ph-video-camera" />לעיצוב הקריוקי</button>

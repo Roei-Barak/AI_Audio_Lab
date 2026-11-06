@@ -15,7 +15,7 @@ from lyra_server import engines  # noqa: E402
 
 @pytest.fixture()
 def env(tmp_path: Path):
-    cfg = Config(data_dir=tmp_path, engine="mock", ffmpeg="ffmpeg", ffprobe="ffprobe")
+    cfg = Config(data_dir=tmp_path, engine="mock", ffmpeg="ffmpeg", ffprobe="ffprobe", auth=False)
     app = create_app(cfg, autostart=False)
     return TestClient(app), app.state.queue, tmp_path
 
@@ -133,7 +133,7 @@ def test_words_to_lines_and_ass_line_timing():
 
 def test_restart_marks_running_job_as_crash(tmp_path):
     (tmp_path / "jobs.json").write_text(json.dumps([{"id": "j1", "projectId": "p", "kind": "process", "status": "running", "stage": 2, "pct": 0, "attempt": 1, "log": []}]))
-    cfg = Config(data_dir=tmp_path, engine="mock", ffmpeg="ffmpeg", ffprobe="ffprobe")
+    cfg = Config(data_dir=tmp_path, engine="mock", ffmpeg="ffmpeg", ffprobe="ffprobe", auth=False)
     app = create_app(cfg, autostart=False)
     j = app.state.queue.list()[0]
     assert j["status"] == "failed" and j["crash"]

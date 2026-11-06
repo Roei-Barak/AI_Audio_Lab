@@ -11,8 +11,18 @@ FastAPI processing server for the Lyra Studio frontend in `../app`. It runs the 
 Behaviour:
 - One heavy GPU job runs at a time.
 - Every stage is a checkpoint, so a crash or a server restart resumes from the stage that failed.
-- Cancel takes effect at the end of the current stage.
-- Saves use optimistic concurrency: `PUT /api/projects/{id}` returns 409 with the server copy when someone else saved first.
+- **Progress**: the render reports real progress from ffmpeg. Separation and transcription show an *estimate* (marked as such), because the models don't report progress.
+- **Cancel**: stops the render immediately. Separation and transcription finish their current stage first.
+- **Saves**: optimistic concurrency. `PUT /api/projects/{id}` returns 409 with the server copy when someone else saved first.
+- **Pasted lyrics**: `POST /api/projects/{id}/lyrics` aligns them to the transcription's word timings (difflib), and words it can't match get estimated times marked low confidence. With no transcription, it creates line timing only; word timings are never invented.
+
+## Accounts (private, no public signup)
+- **First visit**: creates the admin (`/api/auth/setup`, only while no user exists).
+- **Joining**: everyone else joins with a one-time invite link the admin copies and sends. Invites expire after 1–30 days and work once.
+- **Roles**: `viewer` can watch, play and download. `editor` can also edit and run jobs. `admin` can also manage users, invites and settings. At least one admin always remains.
+- **Password reset**: the admin creates a one-time reset link (valid 24h). Resetting signs out the user's other sessions.
+- **Storage**: passwords are scrypt-hashed. Sessions are an HttpOnly cookie, so media playback is authenticated too. `LYRA_TOKEN` is a service token for scripts.
+- **Local development**: `LYRA_AUTH=off` disables accounts.
 
 ## Run
 
@@ -32,7 +42,8 @@ For frontend development, run `npm run dev` in `app/`; it proxies `/api` to port
 |---|---|---|
 | `LYRA_ENGINE` | `ai` | `mock` runs fast stand-ins (phase-cancellation instrumental, placeholder words) for development and tests. Rendering is real in both modes. |
 | `LYRA_DATA_DIR` | `Karaoke_Output/lyra` | Projects, stems, renders, `jobs.json`. |
-| `LYRA_TOKEN` | unset | When set, every API call needs `Authorization: Bearer <token>`. |
+| `LYRA_AUTH` | `on` | `off` disables accounts (local development only). |
+| `LYRA_TOKEN` | unset | Service token for scripts: `Authorization: Bearer <token>` acts as admin. |
 | `LYRA_CORS` | `http://localhost:5173,http://localhost:4173` | Allowed origins for a separately served UI. |
 | `LYRA_FFMPEG` / `LYRA_FFPROBE` | from PATH or imageio-ffmpeg | |
 
@@ -40,7 +51,7 @@ For frontend development, run `npm run dev` in `app/`; it proxies `/api` to port
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q                                            # mock engine + real ffmpeg
+pytest -q                                            # mock engine + real ffmpeg (12 tests)
 LYRA_ENGINE=mock LYRA_DATA_DIR=/tmp/lyra uvicorn lyra_server.app:app --port 8443 &
 node ../app/e2e/server.cjs clip.mp4                  # browser end-to-end against the server
 ```
@@ -49,6 +60,9 @@ node ../app/e2e/server.cjs clip.mp4                  # browser end-to-end agains
 
 `GET /api/health` · `POST /api/sources/youtube` · `GET|POST /api/projects` · `GET|PUT|DELETE /api/projects/{id}` ·
 `POST /api/projects/{id}/upload` · `GET /api/projects/{id}/files/{source|vocals|instrumental|drums|bass|other|karaoke}?download=1` ·
-`GET|POST /api/jobs` · `GET|DELETE /api/jobs/{id}` · `POST /api/jobs/{id}/cancel|retry|move`
+`GET|POST /api/jobs` · `GET|DELETE /api/jobs/{id}` · `POST /api/jobs/{id}/cancel|retry|move` ·
+`GET /api/projects/{id}/files/ass` · `POST /api/projects/{id}/lyrics` · `GET|POST|DELETE /api/projects/{id}/versions` · `GET /api/projects/{id}/versions/{vid}` ·
+`GET|POST /api/outputs` · `GET|PUT /api/settings` ·
+`GET /api/auth/status` · `POST /api/auth/setup|login|logout|accept|reset` · `GET /api/users` · `PATCH|DELETE /api/users/{id}` · `POST /api/users/{id}/reset` · `GET|POST /api/invites` · `DELETE /api/invites/{id}`
 
-Not yet: server-side user accounts. The UI's sign-in and invites are local to the browser; use `LYRA_TOKEN` to protect a server exposed beyond your own computer.
+Use HTTPS (a reverse proxy) before exposing the server beyond your home network.

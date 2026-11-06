@@ -5,7 +5,8 @@ import { playback, usePlayback } from '../../store/playback';
 import { store, useStore } from '../../store/store';
 import type { StemMix } from '../../store/types';
 import { ui, useUI } from '../../store/ui';
-import { useWS, ws } from '../../store/workspace';
+import { useWS } from '../../store/workspace';
+import * as RW from '../../store/remoteWs';
 import { Card, KV, Page, Tabs } from './Sidebar';
 import { StateView } from './SystemStates';
 
@@ -90,7 +91,7 @@ export function ProjectDetails() {
         <Card>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span className="kicker">נקודות שמירה</span>
-            <button className="btn btn-secondary" style={{ marginInlineStart: 'auto' }} onClick={() => { ws.saveVersion('נקודת שמירה ידנית'); ui.toast('נוצרה נקודת שמירה'); }}><i className="ph ph-bookmark-simple" />צור נקודת שמירה</button>
+            <button className="btn btn-secondary" style={{ marginInlineStart: 'auto' }} onClick={async () => { await RW.saveVersion('נקודת שמירה ידנית'); ui.toast('נוצרה נקודת שמירה'); }}><i className="ph ph-bookmark-simple" />צור נקודת שמירה</button>
           </div>
           {versions.length === 0 ? (
             <span className="muted" style={{ fontSize: 13 }}>אין עדיין נקודות שמירה. ⌘S או הכפתור למעלה יוצרים אחת.</span>

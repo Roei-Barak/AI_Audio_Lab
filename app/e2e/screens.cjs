@@ -31,7 +31,8 @@ const ROUTES = ['dashboard', 'library', 'queue', 'outputs', 'team', 'options', '
   await pg.getByRole('button', { name: 'התנתקות' }).click();
   await pg.getByLabel('סיסמה').fill('1234');
   await pg.getByRole('button', { name: 'התחבר' }).click();
-  log('logout + login', await pg.getByRole('heading', { name: /שלום/ }).isVisible());
+  await pg.getByRole('heading', { name: 'צור קריוקי משיר' }).waitFor();
+  log('logout + login (lands on Simple Mode)', true);
   // invite flow
   await pg.evaluate(() => { location.hash = 'team'; }); await pg.reload();
   await pg.getByRole('button', { name: 'צור קישור הזמנה' }).first().click();
@@ -45,9 +46,12 @@ const ROUTES = ['dashboard', 'library', 'queue', 'outputs', 'team', 'options', '
   await pg.getByLabel('שם משתמש').fill('uri');
   await pg.getByLabel('סיסמה').fill('password1');
   await pg.getByRole('button', { name: 'צור חשבון' }).click();
-  log('invite accepted, signed in as new user', await pg.getByText('אורי אלון').first().isVisible());
+  await pg.getByRole('heading', { name: 'צור קריוקי משיר' }).waitFor();
+  await pg.evaluate(() => { location.hash = 'dashboard'; }); await pg.reload();
+  log('invite accepted, signed in as new user', await pg.getByRole('heading', { name: 'שלום, אורי' }).isVisible());
   await pg.getByRole('button', { name: 'התנתקות' }).click();
   await pg.getByLabel('סיסמה').fill('1234'); await pg.getByRole('button', { name: 'התחבר' }).click();
+  await pg.getByRole('heading', { name: 'צור קריוקי משיר' }).waitFor();
   // find & replace
   await pg.evaluate(() => { location.hash = 'subs-word'; }); await pg.reload();
   await pg.waitForTimeout(400);

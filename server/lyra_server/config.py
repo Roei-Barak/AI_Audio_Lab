@@ -28,6 +28,7 @@ class Config:
     max_file_bytes: int = 20 * 1024**3
     max_duration_s: float = 3 * 3600
     host_label: str = "המחשב הזה"
+    auth: bool = True  # accounts required (LYRA_AUTH=off only for local development and tests)
 
 
 def load() -> Config:
@@ -41,4 +42,5 @@ def load() -> Config:
         ffmpeg=ff,
         ffprobe=probe,
         host_label=os.environ.get("LYRA_HOST_LABEL", "המחשב הזה"),
+        auth=os.environ.get("LYRA_AUTH", "on").lower() not in ("off", "0", "false"),
     )

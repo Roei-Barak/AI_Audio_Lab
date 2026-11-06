@@ -6,6 +6,7 @@ import '@phosphor-icons/web/fill';
 import './styles/nocturne.css';
 import './styles/app.css';
 import './store/server';
+import './store/remoteWs';
 import { App } from './App';
 
 createRoot(document.getElementById('root')!).render(

@@ -107,6 +107,8 @@ export interface Job {
   error?: string | null;
   crash?: boolean;
   log?: string[];
+  /** pct is an estimate (models do not report progress) */
+  estimate?: boolean;
 }
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'local' | 'failed' | 'conflict';

@@ -335,7 +335,8 @@ def _esc(s: str) -> str:
 RES = {"1080p": {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)}, "720p": {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (720, 720)}}
 
 
-def render(cfg: Config, project: dict, source: Path, instrumental: Path, out: Path, has_video: bool, duration: float, log: Log) -> Path:
+def render(cfg: Config, project: dict, source: Path, instrumental: Path, out: Path, has_video: bool, duration: float, log: Log,
+           on_pct: Callable[[float], None] | None = None, should_stop: Callable[[], bool] | None = None) -> Path:
     """Original video (muted) + instrumental + burned-in karaoke subtitles -> MP4."""
     st = project.get("style", {})
     w, h = RES.get(project.get("export", {}).get("res", "1080p"), RES["1080p"]).get(st.get("aspect", "16:9"), (1920, 1080))
@@ -353,10 +354,110 @@ def render(cfg: Config, project: dict, source: Path, instrumental: Path, out: Pa
     cmd = [cfg.ffmpeg, "-y", "-v", "error", *inputs, "-i", str(instrumental), "-filter_complex", vf, "-map", "[v]", "-map", "1:a",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(out)]
     log("render " + out.name)
-    run(cmd)
+    if on_pct and should_stop:
+        run_progress(cmd, duration, on_pct, should_stop)
+    else:
+        run(cmd)
     return out
 
 
 def _ff_path(p: Path) -> str:
     # escape for the ffmpeg filter graph
     return "'" + str(p).replace("\\", "/").replace(":", r"\:").replace("'", r"\'") + "'"
+
+
+# ---------------- pasted lyrics ----------------
+
+def _norm(w: str) -> str:
+    return re.sub(r"[^\w֐-׿]", "", w).lower()
+
+
+def align_lyrics(text: str, asr_words: list[dict], duration: float, vocal_spans: list[tuple[float, float]] | None = None) -> tuple[list[dict], str]:
+    """Maps user-pasted lyrics onto timings.
+
+    With transcription words: sequence-align the pasted words to the ASR words (difflib) and copy their
+    timings; unmatched words are interpolated between their matched neighbours ("word" timing, conf med/low).
+    Without them: each line is spread evenly over the song ("line" timing only: no invented word timing).
+    """
+    import difflib
+
+    lines = [ln.split() for ln in text.splitlines() if ln.strip()]
+    flat = [(li, w) for li, ws in enumerate(lines) for w in ws]
+    if not flat:
+        return [], "line"
+    if not asr_words:
+        span0, span1 = (vocal_spans[0][0], vocal_spans[-1][1]) if vocal_spans else (0.5, max(1.0, duration - 0.5))
+        step = (span1 - span0) / len(lines)
+        out = []
+        for i, ws in enumerate(lines):
+            s, e = span0 + i * step, span0 + (i + 1) * step - 0.2
+            d = (e - s) / len(ws)
+            out.append([{"w": w, "s": round(s + j * d, 2), "e": round(s + (j + 1) * d - 0.05, 2), "conf": "low"} for j, w in enumerate(ws)])
+        return _pack(out), "line"
+    a = [_norm(w) for _, w in flat]
+    b = [_norm(w["w"]) for w in asr_words]
+    times: list[tuple[float, float, str] | None] = [None] * len(flat)
+    for blk in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks():
+        for k in range(blk.size):
+            aw = asr_words[blk.b + k]
+            times[blk.a + k] = (aw["s"], aw["e"], aw.get("conf", "high"))
+    # interpolate gaps between matched anchors
+    i = 0
+    while i < len(times):
+        if times[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < len(times) and times[j] is None:
+            j += 1
+        left = times[i - 1][1] if i > 0 else (asr_words[0]["s"] if asr_words else 0.0)
+        right = times[j][0] if j < len(times) else max(left + 0.5 * (j - i), asr_words[-1]["e"])
+        d = max(0.12, (right - left) / (j - i))
+        for k in range(i, j):
+            s = left + (k - i) * d
+            times[k] = (round(s, 2), round(s + d * 0.85, 2), "low")
+        i = j
+    out: list[list[dict]] = [[] for _ in lines]
+    for (li, w), t in zip(flat, times):
+        out[li].append({"w": w, "s": t[0], "e": t[1], "conf": "med" if t[2] != "low" else "low"})
+    return _pack(out), "word"
+
+
+def _pack(groups: list[list[dict]]) -> list[dict]:
+    res = []
+    for i, ws in enumerate(groups):
+        if not ws:
+            continue
+        res.append({"id": f"l{i:04d}", "start": ws[0]["s"], "end": ws[-1]["e"], "speaker": "1", "manual": True,
+                    "words": [{"id": f"w{i:04d}_{j:02d}", "w": w["w"], "s": w["s"], "e": w["e"], "conf": w["conf"], "manual": False} for j, w in enumerate(ws)]})
+    return res
+
+
+# ---------------- cancellable ffmpeg with real progress ----------------
+
+def run_progress(cmd: list[str], duration: float, on_pct: Callable[[float], None], should_stop: Callable[[], bool]) -> None:
+    """Runs ffmpeg with -progress, reporting real percent and killing the process on cancel."""
+    import time as _t
+
+    full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+    p = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    last = 0.0
+    assert p.stdout
+    for line in p.stdout:
+        if should_stop():
+            p.kill()
+            p.wait()
+            raise InterruptedError()
+        if line.startswith("out_time_us=") and duration > 0:
+            try:
+                us = int(line.split("=", 1)[1])
+            except ValueError:
+                continue
+            pct = max(0.0, min(99.0, us / 1e6 / duration * 100))
+            if pct - last >= 1 or _t.time() % 2 < 0.05:
+                on_pct(pct)
+                last = pct
+    p.wait()
+    if p.returncode != 0:
+        err = (p.stderr.read() if p.stderr else "").strip().splitlines()[-1:] or ["ffmpeg failed"]
+        raise StageError(err[0])

@@ -124,3 +124,25 @@ describe('workspace', () => {
     expect(moved.s).toBe(l.words[0].e);
   });
 });
+
+import { alignLyricsLocal, toAss } from '../lib/format';
+
+describe('ass + pasted lyrics', () => {
+  it('ASS has word sweeps and style', () => {
+    localStorage.clear();
+    store.reset();
+    const a = toAss(store.ensure());
+    expect(a).toContain('PlayResY: 1080');
+    expect(a).toMatch(/\{\\kf\d+\}הלילה/);
+    expect(a.split('Dialogue:').length - 1).toBe(10);
+  });
+  it('local lyrics keep timings when the word count matches', () => {
+    const p = store.ensure();
+    const text = p.lines.map((l) => l.words.map((w) => w.w).join(' ')).join('\n');
+    const out = alignLyricsLocal(text, p);
+    expect(out[3].words[0].s).toBe(p.lines[3].words[0].s);
+    const short = alignLyricsLocal('שורה אחת\nשורה שתיים', p);
+    expect(short).toHaveLength(2);
+    expect(short[1].words[0].conf).toBe('low');
+  });
+});
